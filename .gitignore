@@ -1,17 +1,42 @@
-./velodyne_driver_16_32
-./cmake-build-debug/cmake-build-debug
-./vins_estimator/camke-build-debug
-./vins_estimator/camke-build-release
-./super_odometry/camke-build-debug
-*.idea
-*.vscode
-./build
-./install
-./log
-__pycache__
+# IDE and local tooling
+.codex
+.idea/
+.vscode/
+.DS_Store
+
+# Legacy local build directories
+velodyne_driver_16_32/
+cmake-build-*/
+vins_estimator/camke-build-debug/
+vins_estimator/camke-build-release/
+super_odometry/camke-build-debug/
+
+# ROS 2 / colcon build outputs
+build/
+install/
+log/
+
+# Local datasets and run artifacts
+data_bag/
+loc_output/
+mapping_output/
+mapping_output_live/
+super_odometry/PLY/
+superodom_stats/
+
+# Generated local dependency shim
+third_party/sophus_shim/
+
+# Python cache
+__pycache__/
 *.pyc
 *.pyo
 *.pyd
 *.pyw
 *.pyz
 *.pywz
+
+# SQLite bags and temporary files produced by local runs
+*.db3
+*.db3-shm
+*.db3-wal
