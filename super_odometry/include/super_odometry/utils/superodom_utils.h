@@ -67,6 +67,7 @@ inline void transformUpdate(const Eigen::Quaterniond &q_w_curr, const Eigen::Vec
 
 bool readPointCloud(const std::string &file_path, pcl::PointCloud<PointType>::Ptr cloud_out);
 
+std::string getLocalizationPosePath(const std::string &file_path);
 
 bool readLocalizationPose(const std::string &file_path, std::vector<OdometryData> &odometry_results);
 

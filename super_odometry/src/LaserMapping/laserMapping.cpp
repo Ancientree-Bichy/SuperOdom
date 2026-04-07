@@ -95,6 +95,14 @@ namespace super_odometry {
         pubprediction_source = this->create_publisher<std_msgs::msg::String>(
             ProjectName+"/prediction_source", 1);
 
+        if (config_.localization_mode && config_.use_rviz_initial_pose) {
+            subInitialPose = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+                "/initialpose", 1,
+                std::bind(&laserMapping::initialPoseHandler, this, std::placeholders::_1), sub_options);
+            RCLCPP_INFO(this->get_logger(),
+                        "Localization will wait for manual initial pose on /initialpose.");
+        }
+
         process_timer_ = this->create_wall_timer(
             std::chrono::milliseconds(static_cast<int>(100.)),
             std::bind(&laserMapping::process, this));
@@ -110,6 +118,14 @@ namespace super_odometry {
         slam.OptSet.velocity_failure_threshold=config_.velocity_failure_threshold;
         slam.OptSet.max_surface_features=config_.max_surface_features;
         slam.OptSet.yaw_ratio=yaw_ratio;
+        slam.paper_repro.enable_prediction_source_switching =
+            config_.paper_repro_enable_prediction_source_switching;
+        slam.paper_repro.enable_active_degeneracy_absolute_pose_constraint =
+            config_.paper_repro_enable_active_degeneracy_absolute_pose_constraint;
+        slam.paper_repro.enable_degeneracy_state_from_uncertainty_gate =
+            config_.paper_repro_enable_degeneracy_state_from_uncertainty_gate;
+        slam.paper_repro.enable_degeneracy_state_from_histogram_gate =
+            config_.paper_repro_enable_degeneracy_state_from_histogram_gate;
         slam.map_dir=config_.map_dir;
         slam.localization_mode=config_.localization_mode;
         slam.init_x=config_.init_x;
@@ -165,7 +181,9 @@ namespace super_odometry {
             if(utils::readPointCloud(config_.map_dir, laserCloudPrior)) {
                 slam.localMap.addSurfPointCloud(*laserCloudPrior);
                 pcl::toROSMsg(*laserCloudPrior, priorCloudMsg);
+                priorCloudMsg.header.stamp = this->now();
                 priorCloudMsg.header.frame_id = WORLD_FRAME;
+                pubLaserCloudPrior->publish(priorCloudMsg);
                 RCLCPP_INFO(this->get_logger(), "\033[1;32m Loading GT Map Succesfully. Localization mode is Ready.\033[0m");
             } else {
                 slam.localization_mode = false;
@@ -191,8 +209,22 @@ namespace super_odometry {
         this->declare_parameter("laser_mapping_node.auto_voxel_size", true);
         this->declare_parameter("laser_mapping_node.forget_far_chunks", false);
         this->declare_parameter("laser_mapping_node.visual_confidence_factor", 1.0);
+        // Source code original state: ON. determinePredictionSource() already switches
+        // predictors based on degeneracy state when this flag is true.
+        this->declare_parameter("paper_repro.enable_prediction_source_switching", true);
+        // Source code original state: ON. The absolute pose prior path already exists
+        // in the public source but only activates for VIO_ODOM + degeneracy.
+        this->declare_parameter("paper_repro.enable_active_degeneracy_absolute_pose_constraint", true);
+        // Source code original state: OFF. This exact gate exists as commented logic
+        // in LidarSlam.cpp and is opt-in here.
+        this->declare_parameter("paper_repro.enable_degeneracy_state_from_uncertainty_gate", false);
+        // Source code original state: OFF. This exact gate exists as commented logic
+        // in LidarSlam.cpp and is opt-in here.
+        this->declare_parameter("paper_repro.enable_degeneracy_state_from_histogram_gate", false);
         this->declare_parameter("laser_mapping_node.localization_mode", false); // Add default value!
         this->declare_parameter("laser_mapping_node.read_pose_file", false);
+        this->declare_parameter("laser_mapping_node.use_rviz_initial_pose", false);
+        this->declare_parameter("laser_mapping_node.rviz_initial_pose_xy_yaw_only", false);
         this->declare_parameter("laser_mapping_node.init_x", 0.0);
         this->declare_parameter("laser_mapping_node.init_y", 0.0);
         this->declare_parameter("laser_mapping_node.init_z", 0.0);
@@ -215,10 +247,36 @@ namespace super_odometry {
         config_.auto_voxel_size = this->get_parameter("laser_mapping_node.auto_voxel_size").as_bool();
         config_.forget_far_chunks = this->get_parameter("laser_mapping_node.forget_far_chunks").as_bool();
         config_.visual_confidence_factor = this->get_parameter("laser_mapping_node.visual_confidence_factor").as_double();
+        config_.paper_repro_enable_prediction_source_switching =
+            this->get_parameter("paper_repro.enable_prediction_source_switching").as_bool();
+        config_.paper_repro_enable_active_degeneracy_absolute_pose_constraint =
+            this->get_parameter("paper_repro.enable_active_degeneracy_absolute_pose_constraint").as_bool();
+        config_.paper_repro_enable_degeneracy_state_from_uncertainty_gate =
+            this->get_parameter("paper_repro.enable_degeneracy_state_from_uncertainty_gate").as_bool();
+        config_.paper_repro_enable_degeneracy_state_from_histogram_gate =
+            this->get_parameter("paper_repro.enable_degeneracy_state_from_histogram_gate").as_bool();
         config_.map_dir = this->get_parameter("map_dir").as_string(); 
         config_.localization_mode = this->get_parameter("laser_mapping_node.localization_mode").as_bool();
         config_.read_pose_file = this->get_parameter("laser_mapping_node.read_pose_file").as_bool();
+        config_.use_rviz_initial_pose = this->get_parameter("laser_mapping_node.use_rviz_initial_pose").as_bool();
+        config_.rviz_initial_pose_xy_yaw_only =
+            this->get_parameter("laser_mapping_node.rviz_initial_pose_xy_yaw_only").as_bool();
         config_.use_imu_roll_pitch = USE_IMU_ROLL_PITCH;
+
+        if (config_.localization_mode && config_.use_rviz_initial_pose) {
+            if (config_.rviz_initial_pose_xy_yaw_only) {
+                RCLCPP_INFO(this->get_logger(),
+                            "RViz initial pose mode: x/y/yaw only; z/roll/pitch stay at configured values "
+                            "(z=%.3f, roll=%.3f, pitch=%.3f).",
+                            config_.init_z, config_.init_roll, config_.init_pitch);
+            } else {
+                RCLCPP_INFO(this->get_logger(),
+                            "RViz initial pose mode: full pose from /initialpose.");
+            }
+        } else if (config_.localization_mode) {
+            RCLCPP_INFO(this->get_logger(),
+                        "RViz initial pose mode: disabled; using configured init pose or pose file.");
+        }
 
         if(config_.read_pose_file)
         {   
@@ -298,7 +356,6 @@ void laserMapping::initializeFirstFrame(){
     }
 
     //initialize position 
-    q_wodom_pre=q_w_curr;
     T_w_lidar.rot=q_w_curr;
     T_w_lidar.pos=Eigen::Vector3d::Zero();
 
@@ -312,23 +369,44 @@ void laserMapping::initializeFirstFrame(){
         slam.last_T_w_lidar=T_w_lidar;
     }
 
+    q_w_curr = T_w_lidar.rot;
+
+    if (slam.localization_mode && config_.use_rviz_initial_pose &&
+        manual_initial_pose_received_ && sensorMeas.imuPrediction.w() != 0) {
+        q_w_imu_pre = sensorMeas.imuPrediction.normalized();
+        q_wodom_pre = q_w_imu_pre;
+    } else {
+        q_wodom_pre = q_w_curr;
+        q_w_imu_pre = Eigen::Quaterniond(1, 0, 0, 0);
+    }
+
 }
 
 void laserMapping::initializeWithIMU(){
     if(sensorMeas.imuPrediction.w()!=0){  //Have IMU data
-    //Use IMU Orientation directly during startup for seconds 
-    tf2::Quaternion curr_imu(sensorMeas.imuPrediction.w(), sensorMeas.imuPrediction.x(),
-                             sensorMeas.imuPrediction.y(), sensorMeas.imuPrediction.z());
-    
+    // During localization with a manual prior-map alignment, keep the
+    // user-chosen world alignment and only apply relative IMU rotation.
+    Eigen::Quaterniond curr_imu = sensorMeas.imuPrediction.normalized();
+
     //Keep position from last frame 
     t_w_curr=last_T_w_lidar.pos;
     T_w_lidar.pos=t_w_curr;
 
-    //Update rotation 
-    q_w_curr=Eigen::Quaterniond(curr_imu.w(), curr_imu.x(), curr_imu.y(), curr_imu.z());
-    T_w_lidar.rot=q_w_curr;
-
-
+    if (slam.localization_mode && config_.use_rviz_initial_pose && manual_initial_pose_received_) {
+        Eigen::Quaterniond delta_q = q_w_imu_pre.inverse() * curr_imu;
+        delta_q.normalize();
+        q_w_curr = last_T_w_lidar.rot * delta_q;
+        q_w_curr.normalize();
+        T_w_lidar.rot = q_w_curr;
+        q_w_imu_pre = curr_imu;
+        q_wodom_pre = curr_imu;
+    } else {
+        // Original source behavior: use IMU absolute orientation directly
+        // during startup for a few frames.
+        tf2::Quaternion curr_imu_tf(curr_imu.w(), curr_imu.x(), curr_imu.y(), curr_imu.z());
+        q_w_curr=Eigen::Quaterniond(curr_imu_tf.w(), curr_imu_tf.x(), curr_imu_tf.y(), curr_imu_tf.z());
+        T_w_lidar.rot=q_w_curr;
+    }
     }else
     {
       //No IMU data, use last rotation 
@@ -337,6 +415,146 @@ void laserMapping::initializeWithIMU(){
       T_w_lidar=last_T_w_lidar;
 
     } 
+}
+
+void laserMapping::initialPoseHandler(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
+    Transformd pose;
+    double roll = 0.0;
+    double pitch = 0.0;
+    double yaw = 0.0;
+    Eigen::Quaterniond input_rot(
+        msg->pose.pose.orientation.w,
+        msg->pose.pose.orientation.x,
+        msg->pose.pose.orientation.y,
+        msg->pose.pose.orientation.z);
+    input_rot.normalize();
+    tf2::Quaternion orientation(input_rot.x(), input_rot.y(), input_rot.z(), input_rot.w());
+    tf2::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
+
+    pose.pos = Eigen::Vector3d(
+        msg->pose.pose.position.x,
+        msg->pose.pose.position.y,
+        config_.rviz_initial_pose_xy_yaw_only ? config_.init_z : msg->pose.pose.position.z);
+
+    if (config_.rviz_initial_pose_xy_yaw_only) {
+        tf2::Quaternion planar_orientation;
+        planar_orientation.setRPY(config_.init_roll, config_.init_pitch, yaw);
+        pose.rot = Eigen::Quaterniond(
+            planar_orientation.w(),
+            planar_orientation.x(),
+            planar_orientation.y(),
+            planar_orientation.z());
+        roll = config_.init_roll;
+        pitch = config_.init_pitch;
+    } else {
+        pose.rot = input_rot;
+    }
+    pose.rot.normalize();
+
+    {
+        std::lock_guard<std::mutex> lock(initial_pose_mutex_);
+        manual_initial_pose_ = pose;
+        manual_initial_pose_received_ = true;
+        pending_manual_initial_pose_ = true;
+    }
+
+    RCLCPP_INFO(this->get_logger(),
+                "Received manual initial pose: xyz=(%.3f, %.3f, %.3f) rpy=(%.3f, %.3f, %.3f)",
+                pose.pos.x(), pose.pos.y(), pose.pos.z(), roll, pitch, yaw);
+}
+
+bool laserMapping::manualInitialPoseReady() {
+    std::lock_guard<std::mutex> lock(initial_pose_mutex_);
+    return manual_initial_pose_received_;
+}
+
+bool laserMapping::applyPendingManualInitialPose() {
+    Transformd pose;
+    {
+        std::lock_guard<std::mutex> lock(initial_pose_mutex_);
+        if (!pending_manual_initial_pose_) {
+            return false;
+        }
+        pose = manual_initial_pose_;
+        pending_manual_initial_pose_ = false;
+    }
+
+    double roll = 0.0;
+    double pitch = 0.0;
+    double yaw = 0.0;
+    tf2::Quaternion orientation(pose.rot.x(), pose.rot.y(), pose.rot.z(), pose.rot.w());
+    tf2::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
+
+    config_.init_x = pose.pos.x();
+    config_.init_y = pose.pos.y();
+    config_.init_z = pose.pos.z();
+    config_.init_roll = roll;
+    config_.init_pitch = pitch;
+    config_.init_yaw = yaw;
+
+    slam.init_x = config_.init_x;
+    slam.init_y = config_.init_y;
+    slam.init_z = config_.init_z;
+    slam.init_roll = config_.init_roll;
+    slam.init_pitch = config_.init_pitch;
+    slam.init_yaw = config_.init_yaw;
+
+    slam.localMap = LocalMap();
+    slam.localMap.lineRes_ = config_.lineRes;
+    slam.localMap.planeRes_ = config_.planeRes;
+    slam.localMap.setOrigin(Eigen::Vector3d(slam.init_x, slam.init_y, slam.init_z));
+    if (slam.localization_mode && laserCloudPrior && !laserCloudPrior->empty()) {
+        slam.localMap.addSurfPointCloud(*laserCloudPrior);
+        pcl::toROSMsg(*laserCloudPrior, priorCloudMsg);
+        priorCloudMsg.header.frame_id = WORLD_FRAME;
+    }
+
+    Eigen::Quaterniond imu_baseline(1, 0, 0, 0);
+    bool have_imu_baseline = false;
+    {
+        std::lock_guard<std::mutex> lock(mBuf);
+        if (!IMUPredictionBuf.empty()) {
+            imu_baseline = IMUPredictionBuf.front().normalized();
+            have_imu_baseline = true;
+        }
+        clearSensorData();
+    }
+
+    prediction_source = PredictionSource::IMU_ORIENTATION;
+    startupCount = 10;
+    slam.startupCount = 10;
+    initialization = false;
+    q_w_curr = pose.rot;
+    t_w_curr = pose.pos;
+    T_w_lidar = pose;
+    last_T_w_lidar = pose;
+    slam.T_w_lidar = pose;
+    slam.last_T_w_lidar = pose;
+    slam.T_w_initial_guess = pose;
+    if (have_imu_baseline) {
+        q_w_imu_pre = imu_baseline;
+        q_wodom_pre = q_w_imu_pre;
+        q_wodom_curr = q_w_imu_pre;
+    } else {
+        q_w_imu_pre = Eigen::Quaterniond(1, 0, 0, 0);
+        q_wodom_pre = pose.rot;
+        q_wodom_curr = pose.rot;
+    }
+    laserAfterMappedPath.poses.clear();
+    slam.stats.iterations.clear();
+    timeLaserOdometryPrev = 0.0;
+
+    std::vector<utils::OdometryData> saved_pose_records;
+    if (utils::saveLocalizationPose(0.0, pose, slam.map_dir, saved_pose_records)) {
+        RCLCPP_INFO(this->get_logger(), "Saved manual initial pose to %s",
+                    utils::getLocalizationPosePath(slam.map_dir).c_str());
+    } else {
+        RCLCPP_WARN(this->get_logger(), "Failed to save manual initial pose for prior map %s",
+                    slam.map_dir.c_str());
+    }
+
+    RCLCPP_INFO(this->get_logger(), "Applied manual initial pose and reset localization state.");
+    return true;
 }
 
 void laserMapping::selectPosePrediction(){
@@ -383,6 +601,17 @@ t_w_curr=T_w_lidar.pos;
 
 laserMapping::PredictionSource laserMapping::determinePredictionSource(){
 // If system is degerenate, prefer VIO or learning imu odom
+
+if(!slam.paper_repro.enable_prediction_source_switching){
+    if(sensorMeas.lio_prediction_status){
+        return PredictionSource::LIO_ODOM;
+    }
+    sensorMeas.imu_orientation_status=useIMUPrediction(sensorMeas.imuPrediction);
+    if(sensorMeas.imu_orientation_status){
+        return PredictionSource::IMU_ORIENTATION;
+    }
+    return PredictionSource::CONSTANT_VELOCITY;
+}
 
 if(slam.isDegenerate){
     if(sensorMeas.vio_prediction_status){
@@ -768,12 +997,31 @@ return PredictionSource::CONSTANT_VELOCITY;
     void laserMapping::process() {
 
         while (rclcpp::ok()) {
+            if (slam.localization_mode && config_.use_rviz_initial_pose && !manualInitialPoseReady()) {
+                if (laserCloudPrior && !laserCloudPrior->empty()) {
+                    priorCloudMsg.header.stamp = this->now();
+                    priorCloudMsg.header.frame_id = WORLD_FRAME;
+                    pubLaserCloudPrior->publish(priorCloudMsg);
+                }
+                if (checkDataAvailable()) {
+                    std::lock_guard<std::mutex> lock(mBuf);
+                    clearSensorData();
+                }
+                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                                     "Waiting for manual initial pose on /initialpose before processing localization data.");
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                continue;
+            }
             if(!checkDataAvailable()){
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
                 continue;
             }
             try{
                 utils::ScopedTimer timer("Frame Processing");
+                if (applyPendingManualInitialPose()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                    continue;
+                }
                 mBuf.lock(); 
                 sensorMeas=extractSensorData();
                 clearSensorData();

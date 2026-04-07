@@ -14,6 +14,15 @@ namespace utils {
 
 std::vector<OdometryData> odometryResults;
 
+std::string getLocalizationPosePath(const std::string &file_path) {
+    std::filesystem::path input_path(file_path);
+    if (input_path.extension() == ".txt") {
+        return input_path.string();
+    }
+
+    std::filesystem::path parent = input_path.has_parent_path() ? input_path.parent_path() : std::filesystem::path(".");
+    return (parent / (input_path.stem().string() + ".start_pose.txt")).string();
+}
 
 bool readPointCloud(const std::string &file_path, pcl::PointCloud<PointType>::Ptr cloud_out) {
     std::ifstream file_check(file_path.c_str());
@@ -35,13 +44,17 @@ bool readPointCloud(const std::string &file_path, pcl::PointCloud<PointType>::Pt
 }
 
 bool readLocalizationPose(const std::string &file_path, std::vector<OdometryData> &odometry_results) {
-    std::string localizationPosePath = file_path;
-    
-    // If file_path is a directory, append "start_pose.txt"
-    size_t lastSlashPos = file_path.find_last_of('/');
-    if (lastSlashPos != std::string::npos) {
-        std::string directory = file_path.substr(0, lastSlashPos + 1);
-        localizationPosePath = directory + "start_pose.txt";
+    std::string localizationPosePath = getLocalizationPosePath(file_path);
+
+    if (!std::filesystem::exists(localizationPosePath)) {
+        std::filesystem::path input_path(file_path);
+        if (input_path.extension() != ".txt") {
+            std::filesystem::path legacy_path =
+                (input_path.has_parent_path() ? input_path.parent_path() : std::filesystem::path(".")) / "start_pose.txt";
+            if (std::filesystem::exists(legacy_path)) {
+                localizationPosePath = legacy_path.string();
+            }
+        }
     }
     
     std::ifstream file(localizationPosePath);
@@ -78,17 +91,13 @@ bool readLocalizationPose(const std::string &file_path, std::vector<OdometryData
 
 bool saveLocalizationPose(double timestamp, const Transformd &T_w_lidar, 
                          const std::string &file_path, std::vector<OdometryData> &odometry_results) {
-    std::string saveOdomPath;
-    size_t lastSlashPos = file_path.find_last_of('/');
-    if (lastSlashPos != std::string::npos) {
-        saveOdomPath = file_path.substr(0, lastSlashPos + 1); // Include the trailing slash
-    } else {
-        saveOdomPath = "./";
-    }
+    std::string localizationPosePath = getLocalizationPosePath(file_path);
+    std::filesystem::create_directories(std::filesystem::path(localizationPosePath).parent_path());
 
     OdometryData odom;
     {
         odom.timestamp = timestamp;
+        odom.duration = 0.0;
         odom.x = T_w_lidar.pos.x();
         odom.y = T_w_lidar.pos.y();
         odom.z = T_w_lidar.pos.z(); 
@@ -96,17 +105,17 @@ bool saveLocalizationPose(double timestamp, const Transformd &T_w_lidar,
         tf2::Matrix3x3(orientation).getRPY(odom.roll, odom.pitch, odom.yaw);
     }
 
+    odometry_results.clear();
     odometry_results.push_back(odom);
-    
-    std::string OdomResultPath = saveOdomPath + "start_pose.txt";
-    std::ofstream outFile(OdomResultPath, std::ios::app);
+
+    std::ofstream outFile(localizationPosePath, std::ios::trunc);
     
     if (!outFile.is_open()) {
-        std::cerr << "Error opening file: " << OdomResultPath << std::endl;
+        std::cerr << "Error opening file: " << localizationPosePath << std::endl;
         return false;
     }
 
-    outFile << std::fixed << (odometry_results.size() > 1 ? (odom.timestamp - odometry_results[0].timestamp) : 0.0) << " "
+    outFile << std::fixed << odom.duration << " "
             << odom.x << " " << odom.y << " " << odom.z << " "
             << odom.roll << " " << odom.pitch << " " << odom.yaw << std::endl;
 

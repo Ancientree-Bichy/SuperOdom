@@ -24,6 +24,7 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/common/transforms.h>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include "rclcpp/rclcpp.hpp"
@@ -67,6 +68,12 @@ namespace super_odometry {
         float init_pitch;
         float init_yaw;
         float read_pose_file;
+        bool use_rviz_initial_pose;
+        bool rviz_initial_pose_xy_yaw_only;
+        bool paper_repro_enable_prediction_source_switching;
+        bool paper_repro_enable_active_degeneracy_absolute_pose_constraint;
+        bool paper_repro_enable_degeneracy_state_from_uncertainty_gate;
+        bool paper_repro_enable_degeneracy_state_from_histogram_gate;
     };
 
     class laserMapping : public rclcpp::Node {
@@ -154,6 +161,12 @@ namespace super_odometry {
         void performSLAMOptimization();
 
         void updatePoseAndPublish();
+
+        void initialPoseHandler(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
+
+        bool manualInitialPoseReady();
+
+        bool applyPendingManualInitialPose();
         
 
 
@@ -182,6 +195,7 @@ namespace super_odometry {
         rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subLaserCloudSurfLast;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subIMUOdometry;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subVisualOdometry;
+        rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr subInitialPose;
         rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subLaserCloudFullRes;
         rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subLaserRawdata;
         rclcpp::Subscription<super_odometry_msgs::msg::LaserFeature>::SharedPtr subLaserFeatureInfo;
@@ -240,7 +254,11 @@ namespace super_odometry {
         bool imuorientationAvailable = false;
         bool lastimuodomAvaliable=false;
         bool imu_initialized = false;
+        bool manual_initial_pose_received_ = false;
+        bool pending_manual_initial_pose_ = false;
 
+        std::mutex initial_pose_mutex_;
+        Transformd manual_initial_pose_;
 
         pcl::VoxelGrid<PointType> downSizeFilterCorner;
         pcl::VoxelGrid<PointType> downSizeFilterSurf;

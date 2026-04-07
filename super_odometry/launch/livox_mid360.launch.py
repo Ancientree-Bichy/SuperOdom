@@ -18,6 +18,10 @@ def generate_launch_description():
         package_name="super_odometry",
         file_name="config/livox/livox_mid360_calibration.yaml"
     )
+    paper_repro_switches_path = get_share_file(
+        package_name="super_odometry",
+        file_name="config/paper_reproduction_switches.yaml"
+    )
     home_directory = os.path.expanduser("~")
     
     config_path_arg = DeclareLaunchArgument(
@@ -28,6 +32,11 @@ def generate_launch_description():
     calib_path_arg = DeclareLaunchArgument(
         "calibration_file",
         default_value=calib_path,
+    )
+    paper_repro_switches_arg = DeclareLaunchArgument(
+        "paper_repro_switches_file",
+        default_value=paper_repro_switches_path,
+        description="Path to paper reproduction switch config file for laser_mapping_node"
     )
     odom_topic_arg = DeclareLaunchArgument(
         "odom_topic",
@@ -48,6 +57,11 @@ def generate_launch_description():
     sensor_frame_rot_arg = DeclareLaunchArgument(
         "sensor_frame_rot",
         default_value="sensor_rot",
+    )
+    map_dir_arg = DeclareLaunchArgument(
+        "map_dir",
+        default_value=os.path.join(home_directory, "/path/to/your/pcd"),
+        description="Path to prior map PCD for localization mode"
     )
 
     feature_extraction_node = Node(
@@ -70,8 +84,9 @@ def generate_launch_description():
             "stderr": "screen",
         },
         parameters=[LaunchConfiguration("config_file"),
+            LaunchConfiguration("paper_repro_switches_file"),
             { "calibration_file": LaunchConfiguration("calibration_file"),
-             "map_dir": os.path.join(home_directory, "/path/to/your/pcd"),
+             "map_dir": LaunchConfiguration("map_dir"),
         }],
         remappings=[
             ("laser_odom_to_init", LaunchConfiguration("odom_topic")),
@@ -95,11 +110,13 @@ def generate_launch_description():
         launch_ros.actions.SetParameter(name='use_sim_time', value='false'),
         config_path_arg,
         calib_path_arg,
+        paper_repro_switches_arg,
         odom_topic_arg,
         world_frame_arg,
         world_frame_rot_arg,
         sensor_frame_arg,
         sensor_frame_rot_arg,
+        map_dir_arg,
         feature_extraction_node,
         laser_mapping_node,
         imu_preintegration_node,

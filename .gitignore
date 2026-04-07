@@ -3,6 +3,7 @@
 .idea/
 .vscode/
 .DS_Store
+.omx/
 
 # Legacy local build directories
 velodyne_driver_16_32/
@@ -23,6 +24,7 @@ mapping_output/
 mapping_output_live/
 super_odometry/PLY/
 superodom_stats/
+map_by_scanner/*.start_pose.txt
 
 # Generated local dependency shim
 third_party/sophus_shim/
@@ -40,3 +42,6 @@ __pycache__/
 *.db3
 *.db3-shm
 *.db3-wal
+
+# dataset
+map_by_scanner/

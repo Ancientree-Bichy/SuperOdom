@@ -124,6 +124,23 @@ namespace super_odometry {
             int max_surface_features;
         };
 
+        struct PaperReproductionSwitches {
+            // Source code original state: ON.
+            bool enable_prediction_source_switching = true;
+
+            // Source code original state: ON, but only effective when
+            // predictodom == VIO_ODOM && isDegenerate && Visual_confidence_factor != 0.
+            bool enable_active_degeneracy_absolute_pose_constraint = true;
+
+            // Source code original state: OFF. The exact public gate already
+            // exists in LidarSlam.cpp as commented logic.
+            bool enable_degeneracy_state_from_uncertainty_gate = false;
+
+            // Source code original state: OFF. The exact public gate already
+            // exists in LidarSlam.cpp as commented logic.
+            bool enable_degeneracy_state_from_histogram_gate = false;
+        };
+
         //! Estimation of registration error
         struct RegistrationError {
             // Estimation of the maximum position error
@@ -229,6 +246,7 @@ namespace super_odometry {
         RegistrationError LocalizationUncertainty;
         LidarOdomUncertainty lidarOdomUncer;
         LaserOptSet OptSet;
+        PaperReproductionSwitches paper_repro;
 
         Transformd T_w_lidar;
         Transformd last_T_w_lidar;
@@ -402,6 +420,8 @@ namespace super_odometry {
         void analyzeFeatureObservability(pcaFeature &feature);
 
         void EstimateLidarUncertainty();
+
+        void updateDegeneracyStateFromPaperReproductionSwitches();
 
         void publishUncertainty(double uncer_x, double uncer_y, double uncer_z,
             double uncer_roll, double uncer_pitch, double uncer_yaw);

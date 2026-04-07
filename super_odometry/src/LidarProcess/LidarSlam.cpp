@@ -285,6 +285,9 @@ namespace super_odometry {
     }
     
     bool LidarSLAM::shouldAddAbsolutePoseConstraints(PredictionSource predictodom){
+        if (!paper_repro.enable_active_degeneracy_absolute_pose_constraint) {
+            return false;
+        }
         return predictodom==PredictionSource::VIO_ODOM and isDegenerate==true and Visual_confidence_factor!=0;
     }
 
@@ -979,17 +982,35 @@ double LidarSLAM::computePlaneQualityMetrics(const std::vector<Point>& nearest_p
         stats.uncertainty_pitch=lidarOdomUncer.uncertainty_pitch;
         stats.uncertainty_yaw=lidarOdomUncer.uncertainty_yaw;
 
-        // if (lidarOdomUncer.uncertainty_x<0.2 or lidarOdomUncer.uncertainty_y<0.1 or lidarOdomUncer.uncertainty_z<0.2) {
-        //     isDegenerate = true;
-
-        // }else if (PlaneFeatureHistogramObs.at(6)<20 or PlaneFeatureHistogramObs.at(7)<10 or PlaneFeatureHistogramObs.at(8)<10)
-        // {
-        //     isDegenerate = true;   
-        // }
-        // else {
-        //     isDegenerate = false;
-        // }
+        updateDegeneracyStateFromPaperReproductionSwitches();
     }
+
+   void LidarSLAM::updateDegeneracyStateFromPaperReproductionSwitches() {
+        bool degeneracy_detected = false;
+
+        // Source code original state: OFF. This reproduces the exact public
+        // commented gate from LidarSlam.cpp.
+        if (paper_repro.enable_degeneracy_state_from_uncertainty_gate) {
+            if (lidarOdomUncer.uncertainty_x < 0.2 ||
+                lidarOdomUncer.uncertainty_y < 0.1 ||
+                lidarOdomUncer.uncertainty_z < 0.2) {
+                degeneracy_detected = true;
+            }
+        }
+
+        // Source code original state: OFF. This reproduces the exact public
+        // commented histogram gate from LidarSlam.cpp.
+        if (!degeneracy_detected &&
+            paper_repro.enable_degeneracy_state_from_histogram_gate) {
+            if (PlaneFeatureHistogramObs.at(6) < 20 ||
+                PlaneFeatureHistogramObs.at(7) < 10 ||
+                PlaneFeatureHistogramObs.at(8) < 10) {
+                degeneracy_detected = true;
+            }
+        }
+
+        isDegenerate = degeneracy_detected;
+   }
 
     void LidarSLAM::publishUncertainty(double uncer_x, double uncer_y, double uncer_z,
         double uncer_roll, double uncer_pitch, double uncer_yaw)
