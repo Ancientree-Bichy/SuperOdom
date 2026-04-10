@@ -108,7 +108,7 @@ for bag_dir in "${bag_dirs[@]}"; do
 
   echo "=== Running offline mapping for $bag_name ==="
   OUTPUT_BASE_DIR="$BATCH_OUTPUT_DIR" \
-    bash "$ROOT_DIR/script/run_superodom_livox_bag.sh" --skip-build "$bag_dir" "$bag_name"
+    bash "$ROOT_DIR/script/run_superodom.sh" mapping-bag --skip-build "$bag_dir" "$bag_name"
 
   if [[ -f "$ply_path" ]]; then
     printf '%-20s %-10s %s\n' "$bag_name" "ok" "$ply_path" | tee -a "$SUMMARY_FILE"

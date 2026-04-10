@@ -2,18 +2,50 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-FAST_LIO2_LOC_ROOT=${FAST_LIO2_LOC_ROOT:-"$HOME/workspace/fast_lio2_loc"}
-SOPHUS_SOURCE_DIR=${SOPHUS_SOURCE_DIR:-"$FAST_LIO2_LOC_ROOT/Sophus"}
-GTSAM_DIR=${GTSAM_DIR:-"$FAST_LIO2_LOC_ROOT/gtsam_install/lib/cmake/GTSAM"}
+# shellcheck source=script/common_env.sh
+source "$ROOT_DIR/script/common_env.sh"
+
+DEPENDENCY_WS_ROOT=$(resolve_dependency_ws_root)
+SOPHUS_SOURCE_DIR=${SOPHUS_SOURCE_DIR:-"$(find_sophus_source_dir "$DEPENDENCY_WS_ROOT")"}
+GTSAM_DIR=${GTSAM_DIR:-"$(find_gtsam_dir "$DEPENDENCY_WS_ROOT")"}
 SOPHUS_SHIM_DIR="$ROOT_DIR/third_party/sophus_shim"
 
 if [[ ! -d "$SOPHUS_SOURCE_DIR/sophus" ]]; then
-  echo "Sophus source directory not found: $SOPHUS_SOURCE_DIR" >&2
+  cat >&2 <<EOF
+Sophus source directory not found.
+
+Checked:
+  SOPHUS_SOURCE_DIR=${SOPHUS_SOURCE_DIR:-<empty>}
+  DEPENDENCY_WS_ROOT=${DEPENDENCY_WS_ROOT:-<empty>}
+
+Provide one of:
+  1. SOPHUS_SOURCE_DIR=/path/to/Sophus_source
+  2. DEPENDENCY_WS_ROOT=/path/to/external_ros_workspace
+
+See:
+  doc/LOC_TASK_GUIDE.md
+EOF
   exit 1
 fi
 
 if [[ ! -f "$GTSAM_DIR/GTSAMConfig.cmake" ]]; then
-  echo "GTSAMConfig.cmake not found: $GTSAM_DIR/GTSAMConfig.cmake" >&2
+  cat >&2 <<EOF
+GTSAMConfig.cmake not found.
+
+Checked:
+  GTSAM_DIR=${GTSAM_DIR:-<empty>}
+  DEPENDENCY_WS_ROOT=${DEPENDENCY_WS_ROOT:-<empty>}
+
+Provide one of:
+  1. GTSAM_DIR=/path/to/GTSAM/cmake/dir
+  2. DEPENDENCY_WS_ROOT=/path/to/external_ros_workspace
+
+Expected:
+  <GTSAM_DIR>/GTSAMConfig.cmake
+
+See:
+  doc/LOC_TASK_GUIDE.md
+EOF
   exit 1
 fi
 
@@ -40,10 +72,7 @@ set(PACKAGE_VERSION_COMPATIBLE TRUE)
 set(PACKAGE_VERSION_EXACT TRUE)
 EOF
 
-set +u
-source /opt/ros/humble/setup.bash
-source "$FAST_LIO2_LOC_ROOT/install/setup.bash"
-set -u
+source_ros_underlays "$DEPENDENCY_WS_ROOT"
 
 colcon build \
   --packages-up-to super_odometry super_odometry_msgs \

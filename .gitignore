@@ -25,6 +25,7 @@ mapping_output_live/
 super_odometry/PLY/
 superodom_stats/
 map_by_scanner/*.start_pose.txt
+script/config/dependency_workspace.local.sh
 
 # Generated local dependency shim
 third_party/sophus_shim/
