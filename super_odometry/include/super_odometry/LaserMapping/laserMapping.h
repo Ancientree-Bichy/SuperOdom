@@ -51,7 +51,13 @@ namespace super_odometry {
         bool enable_ouster_data;
         bool publish_only_feature_points;
         bool use_imu_roll_pitch;
+        bool lio_diagnostics_enabled;
         int max_surface_features;
+        int lio_diagnostics_period;
+        double plane_neighbor_distance_factor;
+        double plane_pca_min_ratio;
+        double plane_max_point_distance_factor;
+        double plane_loss_distance_factor;
         double velocity_failure_threshold;
         bool auto_voxel_size;
         bool forget_far_chunks;

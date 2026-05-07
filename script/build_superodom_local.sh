@@ -9,6 +9,54 @@ DEPENDENCY_WS_ROOT=$(resolve_dependency_ws_root)
 SOPHUS_SOURCE_DIR=${SOPHUS_SOURCE_DIR:-"$(find_sophus_source_dir "$DEPENDENCY_WS_ROOT")"}
 GTSAM_DIR=${GTSAM_DIR:-"$(find_gtsam_dir "$DEPENDENCY_WS_ROOT")"}
 SOPHUS_SHIM_DIR="$ROOT_DIR/third_party/sophus_shim"
+COLCON_PREFIX_ARGS=()
+COLCON_BASE_ARGS=()
+
+clean_default_build_tree_if_moved() {
+  if [[ -n "${SUPERODOM_BUILD_BASE:-}" || -n "${SUPERODOM_INSTALL_BASE:-}" || -n "${SUPERODOM_LOG_BASE:-}" ]]; then
+    return
+  fi
+
+  local cache source_dir binary_dir
+  local stale_cache=""
+  while IFS= read -r -d '' cache; do
+    source_dir=$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$cache" | head -n 1)
+    binary_dir=$(sed -n 's/^# For build in directory: //p' "$cache" | head -n 1)
+    if [[ -n "$source_dir" && "$source_dir" != "$ROOT_DIR/"* ]]; then
+      stale_cache=$cache
+      break
+    fi
+    if [[ -n "$binary_dir" && "$binary_dir" != "$ROOT_DIR/build/"* ]]; then
+      stale_cache=$cache
+      break
+    fi
+  done < <(find "$ROOT_DIR/build" -name CMakeCache.txt -print0 2>/dev/null || true)
+
+  if [[ -n "$stale_cache" ]]; then
+    cat >&2 <<EOF
+Detected stale CMake cache from another SuperOdom checkout:
+  $stale_cache
+
+Cleaning generated default colcon directories under:
+  $ROOT_DIR/build
+  $ROOT_DIR/install
+  $ROOT_DIR/log
+EOF
+    rm -rf "$ROOT_DIR/build" "$ROOT_DIR/install" "$ROOT_DIR/log"
+  fi
+}
+
+if [[ -n "${SUPERODOM_LOG_BASE:-}" ]]; then
+  COLCON_PREFIX_ARGS+=(--log-base "$SUPERODOM_LOG_BASE")
+fi
+if [[ -n "${SUPERODOM_BUILD_BASE:-}" ]]; then
+  COLCON_BASE_ARGS+=(--build-base "$SUPERODOM_BUILD_BASE")
+fi
+if [[ -n "${SUPERODOM_INSTALL_BASE:-}" ]]; then
+  COLCON_BASE_ARGS+=(--install-base "$SUPERODOM_INSTALL_BASE")
+fi
+
+clean_default_build_tree_if_moved
 
 if [[ ! -d "$SOPHUS_SOURCE_DIR/sophus" ]]; then
   cat >&2 <<EOF
@@ -74,7 +122,8 @@ EOF
 
 source_ros_underlays "$DEPENDENCY_WS_ROOT"
 
-colcon build \
+colcon "${COLCON_PREFIX_ARGS[@]}" build \
+  "${COLCON_BASE_ARGS[@]}" \
   --packages-up-to super_odometry super_odometry_msgs \
   --symlink-install \
   --cmake-args \

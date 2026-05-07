@@ -73,6 +73,10 @@ namespace super_odometry {
         double imu_acc_x_limit;
         double imu_acc_y_limit;
         double imu_acc_z_limit;
+        double imu_acc_scale;
+        double imu_gyr_scale;
+        bool require_imu_init_before_lidar;
+        std::string feature_cloud_frame;
     };
 
     struct ImuMeasurement {
@@ -202,6 +206,7 @@ namespace super_odometry {
         bool LASER_CAMERA_SYNC_SUCCESS = false;
         bool IMU_INIT=false;
         double m_imuPeriod;
+        double first_lidar_time_for_imu_init_ = -1.0;
 
         super_odometry_msgs::msg::LaserFeature laserFeature;
         std_msgs::msg::Header FeatureHeader;

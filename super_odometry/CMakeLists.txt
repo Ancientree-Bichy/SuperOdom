@@ -150,6 +150,24 @@ target_link_libraries(laser_mapping_node
     SuperOdomLib
 )
 
+# Dual LiDAR pre-fusion node
+add_executable(dual_lidar_fusion_node src/dualLidarFusion_node.cpp)
+ament_target_dependencies(dual_lidar_fusion_node rclcpp sensor_msgs pcl_conversions)
+target_link_libraries(dual_lidar_fusion_node
+    ${PCL_LIBRARIES}
+)
+
+# Hesai PointCloud2 to SuperOdom point layout adapter
+add_executable(hesai_to_superodom_node src/hesaiToSuperOdom_node.cpp)
+ament_target_dependencies(hesai_to_superodom_node rclcpp sensor_msgs pcl_conversions)
+target_link_libraries(hesai_to_superodom_node
+    ${PCL_LIBRARIES}
+)
+
+# Planner-facing odometry frame transform node
+add_executable(odom_frame_transform_node src/odomFrameTransform_node.cpp)
+ament_target_dependencies(odom_frame_transform_node rclcpp nav_msgs geometry_msgs tf2_ros)
+
 # Install Exported Libraries
 ament_export_targets(export_super_odometry HAS_LIBRARY_TARGET)
 
@@ -175,6 +193,9 @@ install(TARGETS
   imu_preintegration_node
   feature_extraction_node
   laser_mapping_node
+  dual_lidar_fusion_node
+  hesai_to_superodom_node
+  odom_frame_transform_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

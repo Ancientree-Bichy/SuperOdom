@@ -2,6 +2,8 @@
 // LOCAL
 #include "super_odometry/LidarProcess/LidarSlam.h"
 
+#include <algorithm>
+
 //TODO: add to header file
 double pose_parameters[7] = {0, 0, 0, 0, 0, 0, 1};
 Eigen::Map<Eigen::Vector3d> T_w_curr(pose_parameters);
@@ -54,6 +56,10 @@ namespace super_odometry {
         T_w_lidar=position;
         T_w_initial_guess=position;
         last_T_w_lidar=T_w_lidar;
+        lastMotionAccepted = true;
+        lastMotionStatus = MOTION_ACCEPTED;
+        last_motion_dt = 0.0;
+        last_motion_speed = 0.0;
     }
     
 
@@ -117,6 +123,14 @@ namespace super_odometry {
 
         //Check if we have enough features for optimization 
         if(!hasEnoughFeatures()){
+            ResetDistanceParameters();
+            last_surface_sampled_num = 0;
+            last_corner_sampled_num = 0;
+            last_surface_sampling_rate = 1.0;
+            lastMotionAccepted = false;
+            lastMotionStatus = MOTION_NOT_ENOUGH_MAP_FEATURES;
+            updateDiagnosticStats(stats);
+            maybeLogLioDiagnostics(timeLaserOdometry, stats);
             RCLCPP_WARN(node_->get_logger(), "Not enough features for optimization");
             return;
         }
@@ -166,10 +180,14 @@ namespace super_odometry {
         updateOptimizationStats(t_opt, stats);
         
         // Check motion thresholds and update map
-        if (checkMotionThresholds(timeLaserOdometry, stats)) {
+        lastMotionAccepted = checkMotionThresholds(timeLaserOdometry, stats);
+        updateDiagnosticStats(stats);
+        maybeLogLioDiagnostics(timeLaserOdometry, stats);
+        if (lastMotionAccepted) {
             // Transform and add new features to map
             transformAndAddToMap(EdgesPoints, WorldEdgesPoints, true);
             transformAndAddToMap(PlanarsPoints, WorldPlanarsPoints, false);
+            last_T_w_lidar = T_w_lidar;
         }
         
         // Update timing
@@ -178,26 +196,44 @@ namespace super_odometry {
 
     bool LidarSLAM::checkMotionThresholds(double timeLaserOdometry, super_odometry_msgs::msg::OptimizationStats &stats) {
     
-        bool acceptResult = true;
         double delta_t = timeLaserOdometry - lasttimeLaserOdometry;
+        last_motion_dt = delta_t;
+        last_motion_speed = 0.0;
+        bool acceptResult = true;
+
+        if (delta_t <= 1e-6) {
+            T_w_lidar = last_T_w_lidar;
+            lastMotionStatus = MOTION_INVALID_DT;
+            RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
+                                "invalid lidar odometry dt, not accumulating. %f", delta_t);
+            return false;
+        }
         
         // Check velocity threshold
-        if (stats.translation_from_last/delta_t > OptSet.velocity_failure_threshold) {
+        last_motion_speed = stats.translation_from_last/delta_t;
+        if (last_motion_speed > OptSet.velocity_failure_threshold) {
             T_w_lidar = last_T_w_lidar;
             startupCount = 5;
             acceptResult = false;
+            lastMotionStatus = MOTION_TOO_LARGE;
             RCLCPP_WARN(node_->get_logger(), "large motion detected, ignoring predictor for a while");
         }
         
         // Check small motion threshold
-        if (stats.translation_from_last < 0.02 && stats.rotation_from_last < 0.005) {
+        if (acceptResult &&
+            stats.translation_from_last < 0.02 && stats.rotation_from_last < 0.005) {
             acceptResult = false;
             T_w_lidar = last_T_w_lidar;
+            lastMotionStatus = MOTION_TOO_SMALL;
             RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
                                 "very small motion, not accumulating. %f", stats.translation_from_last);
         }
-    acceptResult = true;
-    return acceptResult;
+
+        if (acceptResult) {
+            lastMotionStatus = MOTION_ACCEPTED;
+        }
+
+        return acceptResult;
 }
 
 
@@ -212,7 +248,135 @@ namespace super_odometry {
 
         stats.translation_from_last = diff_from_last_T.pos.norm();
         stats.rotation_from_last = 2 * atan2(diff_from_last_T.rot.vec().norm(), diff_from_last_T.rot.w());
-        last_T_w_lidar=T_w_lidar;
+    }
+
+    void LidarSLAM::updateDiagnosticStats(super_odometry_msgs::msg::OptimizationStats &stats) {
+        auto match_count = [](const auto &hist, MatchingResult result) -> int {
+            return hist.at(static_cast<size_t>(result)).load();
+        };
+        auto obs_count = [this](Feature_observability result) -> int {
+            return PlaneFeatureHistogramObs.at(static_cast<size_t>(result)).load();
+        };
+
+        stats.plane_match_success = match_count(MatchRejectionHistogramPlane, SUCCESS);
+        stats.plane_no_enough_neighbor = match_count(MatchRejectionHistogramPlane, NOT_ENOUGH_NEIGHBORS);
+        stats.plane_neighbor_too_far = match_count(MatchRejectionHistogramPlane, NEIGHBORS_TOO_FAR);
+        stats.plane_badpca_structure = match_count(MatchRejectionHistogramPlane, BAD_PCA_STRUCTURE);
+        stats.plane_invalid_numerical = match_count(MatchRejectionHistogramPlane, INVAVLID_NUMERICAL);
+        stats.plane_mse_too_large = match_count(MatchRejectionHistogramPlane, MSE_TOO_LARGE);
+        stats.plane_unknown = match_count(MatchRejectionHistogramPlane, UNKNON);
+
+        stats.line_match_success = match_count(MatchRejectionHistogramLine, SUCCESS);
+        stats.line_no_enough_neighbor = match_count(MatchRejectionHistogramLine, NOT_ENOUGH_NEIGHBORS);
+        stats.line_neighbor_too_far = match_count(MatchRejectionHistogramLine, NEIGHBORS_TOO_FAR);
+        stats.line_badpca_structure = match_count(MatchRejectionHistogramLine, BAD_PCA_STRUCTURE);
+        stats.line_invalid_numerical = match_count(MatchRejectionHistogramLine, INVAVLID_NUMERICAL);
+        stats.line_mse_too_large = match_count(MatchRejectionHistogramLine, MSE_TOO_LARGE);
+        stats.line_unknown = match_count(MatchRejectionHistogramLine, UNKNON);
+
+        stats.observability_rx = obs_count(rx_cross) + obs_count(neg_rx_cross);
+        stats.observability_ry = obs_count(ry_cross) + obs_count(neg_ry_cross);
+        stats.observability_rz = obs_count(rz_cross) + obs_count(neg_rz_cross);
+        stats.observability_tx = obs_count(tx_dot);
+        stats.observability_ty = obs_count(ty_dot);
+        stats.observability_tz = obs_count(tz_dot);
+
+        stats.motion_status = static_cast<int>(lastMotionStatus);
+        stats.motion_dt = last_motion_dt;
+        stats.motion_speed = last_motion_speed;
+        stats.surface_sampling_rate = last_surface_sampling_rate;
+        stats.surface_sampled_num = last_surface_sampled_num;
+        stats.corner_sampled_num = last_corner_sampled_num;
+    }
+
+    const char *LidarSLAM::motionStatusName(MotionStatus status) const {
+        switch (status) {
+            case MOTION_ACCEPTED:
+                return "accepted";
+            case MOTION_INVALID_DT:
+                return "invalid_dt";
+            case MOTION_TOO_LARGE:
+                return "too_large";
+            case MOTION_TOO_SMALL:
+                return "too_small";
+            case MOTION_NOT_ENOUGH_MAP_FEATURES:
+                return "not_enough_map_features";
+        }
+        return "unknown";
+    }
+
+    void LidarSLAM::maybeLogLioDiagnostics(
+        double timeLaserOdometry,
+        const super_odometry_msgs::msg::OptimizationStats &stats) {
+        if (!OptSet.lio_diagnostics_enabled || node_ == nullptr) {
+            return;
+        }
+        const int period = std::max(1, OptSet.lio_diagnostics_period);
+        if (frame_count % period != 0 && lastMotionStatus == MOTION_ACCEPTED) {
+            return;
+        }
+
+        const int plane_total =
+            stats.plane_match_success + stats.plane_no_enough_neighbor +
+            stats.plane_neighbor_too_far + stats.plane_badpca_structure +
+            stats.plane_invalid_numerical + stats.plane_mse_too_large +
+            stats.plane_unknown;
+        const int line_total =
+            stats.line_match_success + stats.line_no_enough_neighbor +
+            stats.line_neighbor_too_far + stats.line_badpca_structure +
+            stats.line_invalid_numerical + stats.line_mse_too_large +
+            stats.line_unknown;
+        const Eigen::Vector3d pose_rpy = T_w_lidar.rot.toRotationMatrix().eulerAngles(0, 1, 2);
+
+        RCLCPP_INFO(node_->get_logger(),
+                    "[LIO_DIAG] frame=%d t=%.3f motion=%s accepted=%s degenerate=%s dt=%.4f speed=%.3f dT=%.4f dR=%.5f pose_xyz=[%.3f,%.3f,%.3f] pose_rpy=[%.4f,%.4f,%.4f] surf_scan=%d surf_map=%d surf_sampled=%d surf_rate=%.3f plane_ok=%d/%d plane_rej=[nn:%d far:%d pca:%d num:%d mse:%d unk:%d] line_ok=%d/%d line_rej=[nn:%d far:%d pca:%d num:%d mse:%d unk:%d] obs_rpy=[%d,%d,%d] obs_xyz=[%d,%d,%d] unc_xyz=[%.2f,%.2f,%.2f] unc_rpy=[%.2f,%.2f,%.2f]",
+                    frame_count,
+                    timeLaserOdometry,
+                    motionStatusName(lastMotionStatus),
+                    lastMotionAccepted ? "true" : "false",
+                    isDegenerate ? "true" : "false",
+                    stats.motion_dt,
+                    stats.motion_speed,
+                    stats.translation_from_last,
+                    stats.rotation_from_last,
+                    T_w_lidar.pos.x(),
+                    T_w_lidar.pos.y(),
+                    T_w_lidar.pos.z(),
+                    pose_rpy.x(),
+                    pose_rpy.y(),
+                    pose_rpy.z(),
+                    stats.laser_cloud_surf_stack_num,
+                    stats.laser_cloud_surf_from_map_num,
+                    stats.surface_sampled_num,
+                    stats.surface_sampling_rate,
+                    stats.plane_match_success,
+                    plane_total,
+                    stats.plane_no_enough_neighbor,
+                    stats.plane_neighbor_too_far,
+                    stats.plane_badpca_structure,
+                    stats.plane_invalid_numerical,
+                    stats.plane_mse_too_large,
+                    stats.plane_unknown,
+                    stats.line_match_success,
+                    line_total,
+                    stats.line_no_enough_neighbor,
+                    stats.line_neighbor_too_far,
+                    stats.line_badpca_structure,
+                    stats.line_invalid_numerical,
+                    stats.line_mse_too_large,
+                    stats.line_unknown,
+                    stats.observability_rx,
+                    stats.observability_ry,
+                    stats.observability_rz,
+                    stats.observability_tx,
+                    stats.observability_ty,
+                    stats.observability_tz,
+                    stats.uncertainty_x,
+                    stats.uncertainty_y,
+                    stats.uncertainty_z,
+                    stats.uncertainty_roll,
+                    stats.uncertainty_pitch,
+                    stats.uncertainty_yaw);
     }
 
 
@@ -274,7 +438,8 @@ namespace super_odometry {
             }else if(constraint.feature_type==FeatureType::PlaneFeature){
                 ceres::CostFunction*cost_function=new SurfNormAnalyticCostFunction(constraint.Xvalue, constraint.NormDir, constraint.negative_OA_dot_norm);
                 // Use a robustifier to limit the outlier contribution 
-                auto *loss_function=new ceres::TukeyLoss(std::sqrt(3*localMap.planeRes_));
+                auto *loss_function = new ceres::TukeyLoss(
+                    std::sqrt(OptSet.plane_loss_distance_factor * localMap.planeRes_));
                 // Weight the contribution of the given match by its reliability 
                 auto *weight_function=new ceres::ScaledLoss(loss_function, constraint.residualCoefficient, ceres::TAKE_OWNERSHIP);
                 problem.AddResidualBlock(cost_function, weight_function, pose_parameters);
@@ -317,8 +482,9 @@ namespace super_odometry {
     }
 
     void LidarSLAM::processEdgeFeatures(tbb::concurrent_vector<OptimizationParameter>&features_corres, int &edge_num){
-        if(EdgesPoints->empty()) return; 
         edge_num=0;
+        last_corner_sampled_num = static_cast<int>(EdgesPoints->size());
+        if(EdgesPoints->empty()) return;
         for(const auto&p: *EdgesPoints){
             auto constraint=ComputeLineDistanceParameters(localMap, p);
             if(constraint.match_result==MatchingResult::SUCCESS){
@@ -330,12 +496,16 @@ namespace super_odometry {
     }
 
     void LidarSLAM::processPlannerFeatures(tbb::concurrent_vector<OptimizationParameter>&features_corres, int &planner_num){
-        if(PlanarsPoints->empty()) return;
-        
-        double sampling_rate=calculateSamplingRate(PlanarsPoints->size());
+        last_surface_sampled_num = 0;
+        last_surface_sampling_rate = 1.0;
         planner_num=0;
+        if(PlanarsPoints->empty()) return;
+
+        double sampling_rate=calculateSamplingRate(PlanarsPoints->size());
+        last_surface_sampling_rate = sampling_rate < 0.0 ? 1.0 : sampling_rate;
         for(size_t i=0; i<PlanarsPoints->size(); ++i){
             if(!shouldProcessPoint(i,sampling_rate)) continue;
+            last_surface_sampled_num++;
             const Point&p=PlanarsPoints->points[i];
             auto constraint=ComputePlaneDistanceParameters(localMap, p);
             if(constraint.match_result==MatchingResult::SUCCESS){
@@ -532,7 +702,7 @@ LidarSLAM::OptimizationParameter LidarSLAM::ComputePlaneDistanceParameters(
     }
     // 2. Set search parameters
     const size_t requiredNearest = LocalizationPlaneDistanceNbrNeighbors;
-    const double square_max_dist = 3 * local_map.planeRes_;
+    const double square_max_dist = OptSet.plane_neighbor_distance_factor * local_map.planeRes_;
 
     // 3. Find nearest neighbors
     std::vector<Point> nearest_pts;
@@ -778,7 +948,7 @@ bool LidarSLAM::computePCAForFeature(const std::vector<Point> &nearest_pts,
     }
     
     if(feature_type == FeatureType::PlaneFeature){
-        if (eigenvalues(0) < 1e-6 || eigenvalues(1) / eigenvalues(2) < 0.1) {
+        if (eigenvalues(0) < 1e-6 || eigenvalues(1) / eigenvalues(2) < OptSet.plane_pca_min_ratio) {
             result.match_result = MatchingResult::BAD_PCA_STRUCTURE;
             return false;
         }
@@ -826,7 +996,7 @@ double LidarSLAM::computePlaneQualityMetrics(const std::vector<Point>& nearest_p
     
 
     double meanSquareDist = 0.0;
-    const double max_point_distance = localMap.planeRes_ / 2.0;
+    const double max_point_distance = localMap.planeRes_ * OptSet.plane_max_point_distance_factor;
     
     // 1. Compute mean square distance to plane
     for (const auto& pt : nearest_pts) {

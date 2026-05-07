@@ -88,11 +88,18 @@ source_ros_underlays() {
 source_ros_runtime_env() {
   local root_dir=$1
   local dependency_ws_root=$2
+  local install_base=${SUPERODOM_INSTALL_BASE:-"$root_dir/install"}
   set +u
   source /opt/ros/humble/setup.bash
   if [[ -n "$dependency_ws_root" && -f "$dependency_ws_root/install/setup.bash" ]]; then
     source "$dependency_ws_root/install/setup.bash"
   fi
-  source "$root_dir/install/setup.bash"
+  if [[ ! -f "$install_base/setup.bash" ]]; then
+    echo "SuperOdom install setup not found: $install_base/setup.bash" >&2
+    echo "Run script/build_superodom_local.sh or unset --skip-build." >&2
+    set -u
+    return 1
+  fi
+  source "$install_base/setup.bash"
   set -u
 }

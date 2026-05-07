@@ -34,6 +34,17 @@ class StatsMonitor(Node):
         )
         self._emit(f"Listening on {topic}")
 
+    @staticmethod
+    def motion_status_name(status: int) -> str:
+        names = {
+            0: "accepted",
+            1: "invalid_dt",
+            2: "too_large",
+            3: "too_small",
+            4: "not_enough_map",
+        }
+        return names.get(status, f"unknown:{status}")
+
     def _emit(self, line: str) -> None:
         print(line, flush=True)
         if self.log_handle is not None:
@@ -51,13 +62,17 @@ class StatsMonitor(Node):
         line = (
             f"[{elapsed:6.1f}s] "
             f"#{self.message_count:04d} "
+            f"motion={self.motion_status_name(msg.motion_status):>14s} "
             f"iter={msg.n_iterations:02d} "
             f"lat={msg.latency:6.1f}ms "
             f"dT={msg.translation_from_last:6.3f} "
             f"dR={msg.rotation_from_last:6.3f} "
+            f"v={msg.motion_speed:6.2f} "
             f"avg={msg.average_distance:6.3f} "
-            f"surf={msg.laser_cloud_surf_stack_num:4d}/{msg.laser_cloud_surf_from_map_num:4d} "
+            f"surf={msg.surface_sampled_num:4d}/{msg.laser_cloud_surf_stack_num:4d}/{msg.laser_cloud_surf_from_map_num:4d} "
             f"corner={msg.laser_cloud_corner_stack_num:4d}/{msg.laser_cloud_corner_from_map_num:4d} "
+            f"plane={msg.plane_match_success:4d}/{msg.plane_match_success + msg.plane_no_enough_neighbor + msg.plane_neighbor_too_far + msg.plane_badpca_structure + msg.plane_invalid_numerical + msg.plane_mse_too_large + msg.plane_unknown:4d} "
+            f"obs_xyz=[{msg.observability_tx:3d},{msg.observability_ty:3d},{msg.observability_tz:3d}] "
             f"u_xyz=[{msg.uncertainty_x:0.2f},{msg.uncertainty_y:0.2f},{msg.uncertainty_z:0.2f}] "
             f"u_rpy=[{msg.uncertainty_roll:0.2f},{msg.uncertainty_pitch:0.2f},{msg.uncertainty_yaw:0.2f}]"
         )

@@ -16,11 +16,15 @@ super_odometry/camke-build-debug/
 build/
 install/
 log/
+.superodom_build/
+.superodom_install/
+.superodom_log/
 
 # Local datasets and run artifacts
 data_bag/
-loc_output/
+loc_output*/
 mapping_output/
+mapping_output_jt128/
 mapping_output_live/
 super_odometry/PLY/
 superodom_stats/
@@ -45,4 +49,5 @@ __pycache__/
 *.db3-wal
 
 # dataset
-map_by_scanner/
+map_by_scanner
+data_bag

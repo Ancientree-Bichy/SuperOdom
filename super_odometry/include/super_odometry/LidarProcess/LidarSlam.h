@@ -94,6 +94,14 @@ namespace super_odometry {
             nRejectionCauses = 7
         };
 
+        enum MotionStatus : uint8_t {
+            MOTION_ACCEPTED = 0,
+            MOTION_INVALID_DT = 1,
+            MOTION_TOO_LARGE = 2,
+            MOTION_TOO_SMALL = 3,
+            MOTION_NOT_ENOUGH_MAP_FEATURES = 4,
+        };
+
         enum Feature_observability : uint8_t {
             rx_cross = 0,               // evaluate for x rotation estimation
             neg_rx_cross = 1,           // evaluate for neg x  rotation estimation
@@ -119,9 +127,15 @@ namespace super_odometry {
             tf2::Quaternion imu_roll_pitch;
             bool  debug_view_enabled;
             bool  use_imu_roll_pitch;
+            bool  lio_diagnostics_enabled = false;
             float velocity_failure_threshold;
             float yaw_ratio;
             int max_surface_features;
+            int lio_diagnostics_period = 20;
+            double plane_neighbor_distance_factor = 3.0;
+            double plane_pca_min_ratio = 0.1;
+            double plane_max_point_distance_factor = 0.5;
+            double plane_loss_distance_factor = 3.0;
         };
 
         struct PaperReproductionSwitches {
@@ -281,6 +295,8 @@ namespace super_odometry {
 
         bool bInitialization = false;
         bool isDegenerate = false;
+        bool lastMotionAccepted = true;
+        MotionStatus lastMotionStatus = MOTION_ACCEPTED;
         bool save_ply = false;
 
         UndistortionMode Undistortion = UndistortionMode::NONE;
@@ -288,6 +304,11 @@ namespace super_odometry {
         std::array<std::atomic_int, MatchingResult::nRejectionCauses> MatchRejectionHistogramLine;
         std::array<std::atomic_int, MatchingResult::nRejectionCauses> MatchRejectionHistogramPlane;
         tbb::concurrent_vector<OptimizationParameter> OptimizationData;
+        double last_motion_dt = 0.0;
+        double last_motion_speed = 0.0;
+        double last_surface_sampling_rate = 1.0;
+        int last_surface_sampled_num = 0;
+        int last_corner_sampled_num = 0;
 
     
         size_t LocalizationICPMaxIter = 4;
@@ -376,6 +397,13 @@ namespace super_odometry {
         bool checkMotionThresholds(double timeLaserOdometry, super_odometry_msgs::msg::OptimizationStats &stats);
 
         void updateOptimizationStats(TicToc &t_opt, super_odometry_msgs::msg::OptimizationStats &stats);
+
+        void updateDiagnosticStats(super_odometry_msgs::msg::OptimizationStats &stats);
+
+        void maybeLogLioDiagnostics(double timeLaserOdometry,
+                                    const super_odometry_msgs::msg::OptimizationStats &stats);
+
+        const char *motionStatusName(MotionStatus status) const;
         
         bool initializeAndTransformPoint(const Point &p, Eigen::Vector3d &pInit, Eigen::Vector3d &pFinal);
         

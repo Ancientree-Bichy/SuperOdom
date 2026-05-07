@@ -61,11 +61,13 @@ namespace super_odometry {
 
         if (config_.N_SCANS != 16 && config_.N_SCANS != 32 && config_.N_SCANS != 64 && config_.N_SCANS != 4 && config_.N_SCANS != 128)
         {
-            RCLCPP_ERROR(this->get_logger(), "only support velodyne, livox, ouster with 16, 32, 64 or 128 scan line! and livox mid 360");
+            RCLCPP_ERROR(this->get_logger(), "only support velodyne, ouster, jt128 with 16, 32, 64 or 128 scan line, and livox mid 360");
             rclcpp::shutdown();
         }
 
-        if (config_.sensor == SensorType::VELODYNE || config_.sensor == SensorType::OUSTER) {
+        if (config_.sensor == SensorType::VELODYNE ||
+            config_.sensor == SensorType::OUSTER ||
+            config_.sensor == SensorType::JT128) {
             subLaserCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(LASER_TOPIC, laser_qos, 
                     std::bind(&featureExtraction::laserCloudHandler, this,
                     std::placeholders::_1), sub_options);
@@ -133,6 +135,10 @@ namespace super_odometry {
         this->declare_parameter<double>("feature_extraction_node.imu_acc_x_limit", 1.0);
         this->declare_parameter<double>("feature_extraction_node.imu_acc_y_limit", 1.0);
         this->declare_parameter<double>("feature_extraction_node.imu_acc_z_limit", 1.0);
+        this->declare_parameter<double>("feature_extraction_node.imu_acc_scale", 1.0);
+        this->declare_parameter<double>("feature_extraction_node.imu_gyr_scale", 1.0);
+        this->declare_parameter<bool>("feature_extraction_node.require_imu_init_before_lidar", false);
+        this->declare_parameter<std::string>("feature_extraction_node.feature_cloud_frame", "");
         this->declare_parameter<std::string>("feature_extraction_node.sensor", "livox");
 
                 
@@ -152,6 +158,15 @@ namespace super_odometry {
         config_.imu_acc_x_limit = this->get_parameter("feature_extraction_node.imu_acc_x_limit").as_double();
         config_.imu_acc_y_limit = this->get_parameter("feature_extraction_node.imu_acc_y_limit").as_double();
         config_.imu_acc_z_limit = this->get_parameter("feature_extraction_node.imu_acc_z_limit").as_double();
+        config_.imu_acc_scale = this->get_parameter("feature_extraction_node.imu_acc_scale").as_double();
+        config_.imu_gyr_scale = this->get_parameter("feature_extraction_node.imu_gyr_scale").as_double();
+        config_.require_imu_init_before_lidar =
+            this->get_parameter("feature_extraction_node.require_imu_init_before_lidar").as_bool();
+        config_.feature_cloud_frame =
+            this->get_parameter("feature_extraction_node.feature_cloud_frame").as_string();
+        if (config_.feature_cloud_frame.empty()) {
+            config_.feature_cloud_frame = SENSOR_FRAME;
+        }
         config_.use_imu_roll_pitch = USE_IMU_ROLL_PITCH;
         config_.imu_acc_x_limit = IMU_ACC_X_LIMIT;
         config_.imu_acc_y_limit = IMU_ACC_Y_LIMIT;
@@ -163,7 +178,16 @@ namespace super_odometry {
             config_.sensor = SensorType::VELODYNE;
         } else if (SENSOR == "ouster") {
             config_.sensor = SensorType::OUSTER;
+        } else if (SENSOR == "jt128") {
+            config_.sensor = SensorType::JT128;
         } 
+        RCLCPP_INFO(this->get_logger(),
+                    "[SuperOdometry::featureExtraction] imu_acc_scale: %.6f imu_gyr_scale: %.9f",
+                    config_.imu_acc_scale, config_.imu_gyr_scale);
+        RCLCPP_INFO(this->get_logger(),
+                    "[SuperOdometry::featureExtraction] feature_cloud_frame: %s require_imu_init_before_lidar: %s",
+                    config_.feature_cloud_frame.c_str(),
+                    config_.require_imu_init_before_lidar ? "true" : "false");
         return true;
     }
 
@@ -400,10 +424,19 @@ namespace super_odometry {
         laserFeature.odom_available = false;
 
       
-        laserFeature.cloud_nodistortion = publishCloud<point_os::PointcloudXYZITR>(pubLaserCloud, laser_no_distortion_points, FeatureHeader.stamp, SENSOR_FRAME);
-        laserFeature.cloud_corner = publishCloud<PointType>(pubEdgePoints, edgePoints, FeatureHeader.stamp, SENSOR_FRAME);
-        laserFeature.cloud_surface = publishCloud<PointType>(pubPlannerPoints, plannerPoints, FeatureHeader.stamp, SENSOR_FRAME);
-        laserFeature.cloud_realsense=publishCloud<PointType>(pubBobPoints, depthPoints, FeatureHeader.stamp, SENSOR_FRAME);
+        laserFeature.cloud_nodistortion =
+            publishCloud<point_os::PointcloudXYZITR>(
+                pubLaserCloud, laser_no_distortion_points, FeatureHeader.stamp,
+                config_.feature_cloud_frame);
+        laserFeature.cloud_corner =
+            publishCloud<PointType>(pubEdgePoints, edgePoints, FeatureHeader.stamp,
+                                    config_.feature_cloud_frame);
+        laserFeature.cloud_surface =
+            publishCloud<PointType>(pubPlannerPoints, plannerPoints,
+                                    FeatureHeader.stamp, config_.feature_cloud_frame);
+        laserFeature.cloud_realsense =
+            publishCloud<PointType>(pubBobPoints, depthPoints, FeatureHeader.stamp,
+                                    config_.feature_cloud_frame);
        
         laserFeature.initial_quaternion_x = q_w_original_l.x();
         laserFeature.initial_quaternion_y = q_w_original_l.y();
@@ -512,10 +545,15 @@ namespace super_odometry {
             point.z=pc_in->points[i].z;
             point.intensity=pc_in->points[i].time;
 
-            if ((abs(pc_in->points[i].x - pc_in->points[i-1].x) > 1e-7)
-                || (abs(pc_in->points[i].y - pc_in->points[i-1].y) > 1e-7)
-                || (abs(pc_in->points[i].z - pc_in->points[i-1].z) > 1e-7)
-                && (pc_in->points[i].x * pc_in->points[i].x + pc_in->points[i].y * pc_in->points[i].y + pc_in->points[i].z * pc_in->points[i].z > (block_range * block_range)))
+            const bool point_changed =
+                (abs(pc_in->points[i].x - pc_in->points[i - 1].x) > 1e-7) ||
+                (abs(pc_in->points[i].y - pc_in->points[i - 1].y) > 1e-7) ||
+                (abs(pc_in->points[i].z - pc_in->points[i - 1].z) > 1e-7);
+            const float range_sq = pc_in->points[i].x * pc_in->points[i].x +
+                                   pc_in->points[i].y * pc_in->points[i].y +
+                                   pc_in->points[i].z * pc_in->points[i].z;
+
+            if (point_changed && range_sq > block_range * block_range)
             {
                 pc_out_surf->push_back(point);
             }
@@ -530,9 +568,11 @@ namespace super_odometry {
         measurement.accel << msg->linear_acceleration.x, 
                             msg->linear_acceleration.y,
                             msg->linear_acceleration.z;
-        measurement.gyr << msg->angular_velocity.x, 
+        measurement.accel *= config_.imu_acc_scale;
+        measurement.gyr << msg->angular_velocity.x,
                         msg->angular_velocity.y,
                         msg->angular_velocity.z;
+        measurement.gyr *= config_.imu_gyr_scale;
         measurement.orientation = Eigen::Quaterniond(msg->orientation.w,
                                                 msg->orientation.x,
                                                 msg->orientation.y,
@@ -557,6 +597,17 @@ namespace super_odometry {
         Imu::Ptr imudata = std::make_shared<Imu>();
         imudata->time = measurement.timestamp;
         
+        // JT128 arrives as PointCloud2, but it must use the same gravity-aligned
+        // frame as IMU preintegration once the initial IMU alignment is known.
+        if (IMU_INIT && config_.sensor == SensorType::JT128) {
+            double gravity = imu_Init->gravity_norm;
+            Eigen::Vector3d gyr = imu_Init->imu_laser_R_Gravity * measurement.gyr;
+            Eigen::Vector3d accel = imu_Init->imu_laser_R_Gravity * measurement.accel;
+            imudata->acc = accel * gravity / imu_Init->acc_mean.norm();
+            imudata->gyr = gyr;
+            return imudata;
+        }
+
         // Handle Livox sensor specific processing
         if(IMU_INIT && config_.sensor == SensorType::LIVOX) {
             double gravity = imu_Init->gravity_norm;
@@ -602,7 +653,13 @@ namespace super_odometry {
 
     void featureExtraction::imuInitialization(double timestamp) {
         double lidar_first_time = 0;
-        if(lidarBuf.getFirstTime(lidar_first_time) && 
+        bool has_lidar_time = lidarBuf.getFirstTime(lidar_first_time);
+        if (!has_lidar_time && first_lidar_time_for_imu_init_ > 0.0) {
+            lidar_first_time = first_lidar_time_for_imu_init_;
+            has_lidar_time = true;
+        }
+
+        if(has_lidar_time &&
             timestamp > lidar_first_time + LIDAR_MESSAGE_TIME + 0.05) {
             
             double first_time = 0.0;
@@ -709,6 +766,20 @@ namespace super_odometry {
 
     void featureExtraction::laserCloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg)
     {  
+        const double lidar_timestamp =
+            laserCloudMsg->header.stamp.sec + laserCloudMsg->header.stamp.nanosec * 1e-9;
+        if (config_.sensor == SensorType::JT128 &&
+            config_.require_imu_init_before_lidar &&
+            !IMU_INIT) {
+            std::lock_guard<std::mutex> lock(m_buf);
+            if (first_lidar_time_for_imu_init_ < 0.0) {
+                first_lidar_time_for_imu_init_ = lidar_timestamp;
+            }
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                                 "Waiting for JT128 IMU initialization before accepting LiDAR frames.");
+            return;
+        }
+
         // Check if we should process this frame based on skip count
         frameCount = frameCount + 1;
         if (frameCount % config_.skipFrame != 0)
@@ -724,9 +795,20 @@ namespace super_odometry {
         if (config_.provide_point_time)
         {
 
-            if (config_.sensor == SensorType::VELODYNE)
+            if (config_.sensor == SensorType::VELODYNE ||
+                config_.sensor == SensorType::JT128)
             {
                 pcl::fromROSMsg(*laserCloudMsg, *pointCloud);
+                if (config_.sensor == SensorType::JT128 && IMU_INIT) {
+                    const Eigen::Matrix3d rotation_matrix = imu_Init->imu_laser_R_Gravity;
+                    for (auto &point : pointCloud->points) {
+                        Eigen::Vector3d raw_point(point.x, point.y, point.z);
+                        Eigen::Vector3d transformed_point = rotation_matrix * raw_point;
+                        point.x = transformed_point.x();
+                        point.y = transformed_point.y();
+                        point.z = transformed_point.z();
+                    }
+                }
 
             }
             else if (config_.sensor == SensorType::OUSTER)
@@ -758,7 +840,7 @@ namespace super_odometry {
             pointCloud = pointCloudwithTime;
         }
 
-        manageLidarBuffer(pointCloud, laserCloudMsg->header.stamp.sec + laserCloudMsg->header.stamp.nanosec * 1e-9);
+        manageLidarBuffer(pointCloud, lidar_timestamp);
 
         if(IMU_INIT==true or imuBuf.empty())
         {   

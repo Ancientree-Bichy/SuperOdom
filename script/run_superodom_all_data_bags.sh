@@ -12,7 +12,7 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") [--skip-build] [--force] [--batch-name <name>]
 
-Batch-run offline mapping for every ROS 2 bag under:
+Batch-run headless MID360 offline mapping for every ROS 2 bag under:
   $DATA_BAG_DIR
 
 Outputs:
@@ -108,7 +108,8 @@ for bag_dir in "${bag_dirs[@]}"; do
 
   echo "=== Running offline mapping for $bag_name ==="
   OUTPUT_BASE_DIR="$BATCH_OUTPUT_DIR" \
-    bash "$ROOT_DIR/script/run_superodom.sh" mapping-bag --skip-build "$bag_dir" "$bag_name"
+    bash "$ROOT_DIR/script/run_superodom.sh" mapping-bag --lidar mid360 \
+      --skip-build --no-rviz --no-keep-rviz "$bag_dir" "$bag_name"
 
   if [[ -f "$ply_path" ]]; then
     printf '%-20s %-10s %s\n' "$bag_name" "ok" "$ply_path" | tee -a "$SUMMARY_FILE"

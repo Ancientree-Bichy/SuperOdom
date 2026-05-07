@@ -117,6 +117,12 @@ namespace super_odometry {
         slam.OptSet.debug_view_enabled=config_.debug_view_enabled;
         slam.OptSet.velocity_failure_threshold=config_.velocity_failure_threshold;
         slam.OptSet.max_surface_features=config_.max_surface_features;
+        slam.OptSet.lio_diagnostics_enabled=config_.lio_diagnostics_enabled;
+        slam.OptSet.lio_diagnostics_period=config_.lio_diagnostics_period;
+        slam.OptSet.plane_neighbor_distance_factor=config_.plane_neighbor_distance_factor;
+        slam.OptSet.plane_pca_min_ratio=config_.plane_pca_min_ratio;
+        slam.OptSet.plane_max_point_distance_factor=config_.plane_max_point_distance_factor;
+        slam.OptSet.plane_loss_distance_factor=config_.plane_loss_distance_factor;
         slam.OptSet.yaw_ratio=yaw_ratio;
         slam.paper_repro.enable_prediction_source_switching =
             config_.paper_repro_enable_prediction_source_switching;
@@ -204,7 +210,13 @@ namespace super_odometry {
         this->declare_parameter("laser_mapping_node.enable_ouster_data", false);
         this->declare_parameter("laser_mapping_node.publish_only_feature_points", false);
         this->declare_parameter("laser_mapping_node.use_imu_roll_pitch", false);
+        this->declare_parameter("laser_mapping_node.lio_diagnostics_enabled", false);
         this->declare_parameter("laser_mapping_node.max_surface_features", 2000);
+        this->declare_parameter("laser_mapping_node.lio_diagnostics_period", 20);
+        this->declare_parameter("laser_mapping_node.plane_neighbor_distance_factor", 3.0);
+        this->declare_parameter("laser_mapping_node.plane_pca_min_ratio", 0.1);
+        this->declare_parameter("laser_mapping_node.plane_max_point_distance_factor", 0.5);
+        this->declare_parameter("laser_mapping_node.plane_loss_distance_factor", 3.0);
         this->declare_parameter("laser_mapping_node.velocity_failure_threshold", 30.0);
         this->declare_parameter("laser_mapping_node.auto_voxel_size", true);
         this->declare_parameter("laser_mapping_node.forget_far_chunks", false);
@@ -242,7 +254,28 @@ namespace super_odometry {
         config_.enable_ouster_data = this->get_parameter("laser_mapping_node.enable_ouster_data").as_bool();
         config_.publish_only_feature_points = this->get_parameter("laser_mapping_node.publish_only_feature_points").as_bool();
         // config_.use_imu_roll_pitch = this->get_parameter("laser_mapping_node.use_imu_roll_pitch").as_bool();
+        config_.lio_diagnostics_enabled = this->get_parameter("laser_mapping_node.lio_diagnostics_enabled").as_bool();
         config_.max_surface_features = this->get_parameter("laser_mapping_node.max_surface_features").as_int();
+        config_.lio_diagnostics_period = this->get_parameter("laser_mapping_node.lio_diagnostics_period").as_int();
+        if (config_.lio_diagnostics_period < 1) {
+            config_.lio_diagnostics_period = 1;
+        }
+        config_.plane_neighbor_distance_factor = this->get_parameter("laser_mapping_node.plane_neighbor_distance_factor").as_double();
+        config_.plane_pca_min_ratio = this->get_parameter("laser_mapping_node.plane_pca_min_ratio").as_double();
+        config_.plane_max_point_distance_factor = this->get_parameter("laser_mapping_node.plane_max_point_distance_factor").as_double();
+        config_.plane_loss_distance_factor = this->get_parameter("laser_mapping_node.plane_loss_distance_factor").as_double();
+        if (config_.plane_neighbor_distance_factor <= 0.0) {
+            config_.plane_neighbor_distance_factor = 3.0;
+        }
+        if (config_.plane_pca_min_ratio < 0.0) {
+            config_.plane_pca_min_ratio = 0.0;
+        }
+        if (config_.plane_max_point_distance_factor <= 0.0) {
+            config_.plane_max_point_distance_factor = 0.5;
+        }
+        if (config_.plane_loss_distance_factor <= 0.0) {
+            config_.plane_loss_distance_factor = 3.0;
+        }
         config_.velocity_failure_threshold = this->get_parameter("laser_mapping_node.velocity_failure_threshold").as_double();
         config_.auto_voxel_size = this->get_parameter("laser_mapping_node.auto_voxel_size").as_bool();
         config_.forget_far_chunks = this->get_parameter("laser_mapping_node.forget_far_chunks").as_bool();
@@ -338,8 +371,8 @@ void laserMapping::setInitialGuess()
 
 void laserMapping::initializeFirstFrame(){
 
-    //Get initial orientation from IMU prediction 
-    if(sensorMeas.imuPrediction.w()!=0){   //Have IMU data
+    // Use IMU roll/pitch only when the configuration explicitly enables it.
+    if(config_.use_imu_roll_pitch && sensorMeas.imuPrediction.w()!=0){   //Have IMU data
         //Extract roll and pitch, zero out yaw 
         tf2::Quaternion initial_orientation=utils::extractRollPitch(sensorMeas.imuPrediction);
         q_w_curr=Eigen::Quaterniond(initial_orientation.w(), initial_orientation.x(),
@@ -383,7 +416,7 @@ void laserMapping::initializeFirstFrame(){
 }
 
 void laserMapping::initializeWithIMU(){
-    if(sensorMeas.imuPrediction.w()!=0){  //Have IMU data
+    if(config_.use_imu_roll_pitch && sensorMeas.imuPrediction.w()!=0){  //Have IMU data
     // During localization with a manual prior-map alignment, keep the
     // user-chosen world alignment and only apply relative IMU rotation.
     Eigen::Quaterniond curr_imu = sensorMeas.imuPrediction.normalized();
@@ -403,8 +436,8 @@ void laserMapping::initializeWithIMU(){
     } else {
         // Original source behavior: use IMU absolute orientation directly
         // during startup for a few frames.
-        tf2::Quaternion curr_imu_tf(curr_imu.w(), curr_imu.x(), curr_imu.y(), curr_imu.z());
-        q_w_curr=Eigen::Quaterniond(curr_imu_tf.w(), curr_imu_tf.x(), curr_imu_tf.y(), curr_imu_tf.z());
+        q_w_curr = curr_imu;
+        q_w_curr.normalize();
         T_w_lidar.rot=q_w_curr;
     }
     }else
@@ -606,7 +639,8 @@ if(!slam.paper_repro.enable_prediction_source_switching){
     if(sensorMeas.lio_prediction_status){
         return PredictionSource::LIO_ODOM;
     }
-    sensorMeas.imu_orientation_status=useIMUPrediction(sensorMeas.imuPrediction);
+    sensorMeas.imu_orientation_status =
+        config_.use_imu_roll_pitch && useIMUPrediction(sensorMeas.imuPrediction);
     if(sensorMeas.imu_orientation_status){
         return PredictionSource::IMU_ORIENTATION;
     }
@@ -626,7 +660,8 @@ if(slam.isDegenerate){
     if(sensorMeas.lio_prediction_status){
         return PredictionSource::LIO_ODOM;
     }
-    sensorMeas.imu_orientation_status=useIMUPrediction(sensorMeas.imuPrediction);
+    sensorMeas.imu_orientation_status =
+        config_.use_imu_roll_pitch && useIMUPrediction(sensorMeas.imuPrediction);
     if(sensorMeas.imu_orientation_status){
         return PredictionSource::IMU_ORIENTATION;
     }
@@ -789,7 +824,7 @@ return PredictionSource::CONSTANT_VELOCITY;
         pubLaserOdometryIncremental->publish(laserOdomIncremental);
 
 
-        if (slam.isDegenerate) {
+        if (slam.isDegenerate || !slam.lastMotionAccepted) {
             odomAftMapped.pose.covariance[0] = 1;
         } else {
             odomAftMapped.pose.covariance[0] = 0;

@@ -59,6 +59,13 @@ namespace super_odometry {
         double imu_acc_x_limit;
         double imu_acc_y_limit;
         double imu_acc_z_limit;
+        double imu_acc_scale;
+        double imu_gyr_scale;
+        double failure_velocity_threshold;
+        double failure_acc_bias_threshold;
+        double failure_gyr_bias_threshold;
+        double failure_startup_acc_bias_threshold;
+        int failure_startup_key_count;
     };
 
     class imuPreintegration : public rclcpp::Node {

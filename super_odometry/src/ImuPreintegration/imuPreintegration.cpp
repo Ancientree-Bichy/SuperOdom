@@ -3,6 +3,9 @@
 //
 #include "super_odometry/ImuPreintegration/imuPreintegration.h"
 
+#include <algorithm>
+#include <cmath>
+
 
 namespace super_odometry {
 
@@ -110,6 +113,13 @@ namespace super_odometry {
         this->declare_parameter<double>("imu_preintegration_node.imu_acc_x_limit", 1.0);
         this->declare_parameter<double>("imu_preintegration_node.imu_acc_y_limit", 1.0);
         this->declare_parameter<double>("imu_preintegration_node.imu_acc_z_limit", 1.0);
+        this->declare_parameter<double>("imu_preintegration_node.imu_acc_scale", 1.0);
+        this->declare_parameter<double>("imu_preintegration_node.imu_gyr_scale", 1.0);
+        this->declare_parameter<double>("imu_preintegration_node.failure_velocity_threshold", 30.0);
+        this->declare_parameter<double>("imu_preintegration_node.failure_acc_bias_threshold", 2.0);
+        this->declare_parameter<double>("imu_preintegration_node.failure_gyr_bias_threshold", 1.0);
+        this->declare_parameter<double>("imu_preintegration_node.failure_startup_acc_bias_threshold", 2.0);
+        this->declare_parameter<int>("imu_preintegration_node.failure_startup_key_count", 0);
 
         config_.imuAccNoise = this->get_parameter("imu_preintegration_node.acc_n").as_double();
         config_.imuAccBiasN = this->get_parameter("imu_preintegration_node.acc_w").as_double();
@@ -122,6 +132,13 @@ namespace super_odometry {
         config_.imu_acc_x_limit = this->get_parameter("imu_preintegration_node.imu_acc_x_limit").as_double();
         config_.imu_acc_y_limit = this->get_parameter("imu_preintegration_node.imu_acc_y_limit").as_double();
         config_.imu_acc_z_limit = this->get_parameter("imu_preintegration_node.imu_acc_z_limit").as_double();
+        config_.imu_acc_scale = this->get_parameter("imu_preintegration_node.imu_acc_scale").as_double();
+        config_.imu_gyr_scale = this->get_parameter("imu_preintegration_node.imu_gyr_scale").as_double();
+        config_.failure_velocity_threshold = this->get_parameter("imu_preintegration_node.failure_velocity_threshold").as_double();
+        config_.failure_acc_bias_threshold = this->get_parameter("imu_preintegration_node.failure_acc_bias_threshold").as_double();
+        config_.failure_gyr_bias_threshold = this->get_parameter("imu_preintegration_node.failure_gyr_bias_threshold").as_double();
+        config_.failure_startup_acc_bias_threshold = this->get_parameter("imu_preintegration_node.failure_startup_acc_bias_threshold").as_double();
+        config_.failure_startup_key_count = this->get_parameter("imu_preintegration_node.failure_startup_key_count").as_int();
         config_.use_imu_roll_pitch = USE_IMU_ROLL_PITCH;
         config_.imu_acc_x_limit = IMU_ACC_X_LIMIT;
         config_.imu_acc_y_limit = IMU_ACC_Y_LIMIT;
@@ -133,7 +150,20 @@ namespace super_odometry {
             config_.sensor = SensorType::VELODYNE;
         } else if (SENSOR == "ouster") {
             config_.sensor = SensorType::OUSTER;
+        } else if (SENSOR == "jt128") {
+            config_.sensor = SensorType::JT128;
         }   
+
+        RCLCPP_INFO(this->get_logger(),
+                    "[SuperOdometry::imuPreintegration] imu_acc_scale: %.6f imu_gyr_scale: %.9f",
+                    config_.imu_acc_scale, config_.imu_gyr_scale);
+        RCLCPP_INFO(this->get_logger(),
+                    "[SuperOdometry::imuPreintegration] failure thresholds vel=%.3f acc_bias=%.3f gyr_bias=%.3f startup_acc_bias=%.3f startup_keys=%d",
+                    config_.failure_velocity_threshold,
+                    config_.failure_acc_bias_threshold,
+                    config_.failure_gyr_bias_threshold,
+                    config_.failure_startup_acc_bias_threshold,
+                    config_.failure_startup_key_count);
 
         return true;
 
@@ -154,6 +184,7 @@ namespace super_odometry {
 
     void imuPreintegration::resetParams() {
         lastImuT_imu = -1;
+        lastImuT_opt = -1;
         doneFirstOpt = false;
         systemInitialized = false;
     }
@@ -226,6 +257,7 @@ namespace super_odometry {
         gtsam::PriorFactor<gtsam::Vector3> priorVel(V(0), prevVel_,
                                                     priorVelNoise);
         graphFactors.add(priorVel);
+        prevState_ = gtsam::NavState(prevPose_, prevVel_);
 
         prevBias_ = gtsam::imuBias::ConstantBias();
         gtsam::PriorFactor<gtsam::imuBias::ConstantBias> priorBias(
@@ -375,6 +407,12 @@ namespace super_odometry {
 
         // 1. integrate_imumeasurement
         integrate_imumeasurement(currentCorrectionTime);
+        if (imuIntegratorOpt_->deltaTij() < 1e-4) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                                "Skipping LiDAR correction because IMU preintegration dt is too small: %.6f",
+                                imuIntegratorOpt_->deltaTij());
+            return;
+        }
 
         lidarodom_w_cur = relativePose;
 
@@ -398,8 +436,10 @@ namespace super_odometry {
     bool imuPreintegration::failureDetection(const gtsam::Vector3 &velCur,
                                              const gtsam::imuBias::ConstantBias &biasCur) {
         Eigen::Vector3f vel(velCur.x(), velCur.y(), velCur.z());
-        if (vel.norm() > 30) {
-            RCLCPP_WARN(this->get_logger(), "Large velocity, reset IMU-preintegration!");
+        if (vel.norm() > config_.failure_velocity_threshold) {
+            RCLCPP_WARN(this->get_logger(),
+                        "Large velocity, reset IMU-preintegration! vel_norm=%.3f threshold=%.3f vel=[%.3f %.3f %.3f]",
+                        vel.norm(), config_.failure_velocity_threshold, vel.x(), vel.y(), vel.z());
             return true;
         }
 
@@ -408,8 +448,19 @@ namespace super_odometry {
         Eigen::Vector3f bg(biasCur.gyroscope().x(), biasCur.gyroscope().y(),
                            biasCur.gyroscope().z());
 
-        if (ba.norm() > 2.0 || bg.norm() > 1.0) {
-            RCLCPP_WARN(this->get_logger(), "Large bias, reset IMU-preintegration!");
+        const double acc_bias_threshold =
+            (key <= config_.failure_startup_key_count)
+                ? std::max(config_.failure_acc_bias_threshold,
+                           config_.failure_startup_acc_bias_threshold)
+                : config_.failure_acc_bias_threshold;
+
+        if (ba.norm() > acc_bias_threshold ||
+            bg.norm() > config_.failure_gyr_bias_threshold) {
+            RCLCPP_WARN(this->get_logger(),
+                        "Large bias, reset IMU-preintegration! key=%d ba_norm=%.3f threshold=%.3f bg_norm=%.3f threshold=%.3f ba=[%.3f %.3f %.3f] bg=[%.3f %.3f %.3f]",
+                        key, ba.norm(), acc_bias_threshold,
+                        bg.norm(), config_.failure_gyr_bias_threshold,
+                        ba.x(), ba.y(), ba.z(), bg.x(), bg.y(), bg.z());
             return true;
         }
 
@@ -425,6 +476,20 @@ namespace super_odometry {
         if (imuQueOpt.empty())
             return;
 
+        const bool lidarCorrectionInvalid = static_cast<int>(odomMsg->pose.covariance[0]) == 1;
+        if (lidarCorrectionInvalid) {
+            RESULT = IMU_STATE::FAIL;
+            health_status = false;
+            std_msgs::msg::Bool health_status_msg;
+            health_status_msg.data = health_status;
+            pubHealthStatus->publish(health_status_msg);
+            last_frame = cur_frame;
+            last_processed_lidar_time = lidarOdomTime;
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                                "Skipping invalid LiDAR odometry correction before IMU factor graph update.");
+            return;
+        }
+
         float p_x = odomMsg->pose.pose.position.x;
         float p_y = odomMsg->pose.pose.position.y;
         float p_z = odomMsg->pose.pose.position.z;
@@ -432,6 +497,15 @@ namespace super_odometry {
         float r_y = odomMsg->pose.pose.orientation.y;
         float r_z = odomMsg->pose.pose.orientation.z;
         float r_w = odomMsg->pose.pose.orientation.w;
+        if (!std::isfinite(p_x) || !std::isfinite(p_y) || !std::isfinite(p_z) ||
+            !std::isfinite(r_x) || !std::isfinite(r_y) || !std::isfinite(r_z) ||
+            !std::isfinite(r_w)) {
+            RESULT = IMU_STATE::FAIL;
+            health_status = false;
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                                "Skipping non-finite LiDAR odometry correction before IMU factor graph update.");
+            return;
+        }
         gtsam::Pose3 lidarPose = gtsam::Pose3(gtsam::Rot3::Quaternion(r_w, r_x, r_y, r_z),
                                               gtsam::Point3(p_x, p_y, p_z));
 
@@ -452,10 +526,6 @@ namespace super_odometry {
             RESULT = IMU_STATE::SUCCESS;
             health_status = true;
           
-            if((int)odomMsg->pose.covariance[0] == 1) {
-                RESULT = IMU_STATE::FAIL;
-            }
-         
         } else {
             health_status = false;
             if (cur_frame != nullptr && last_frame != nullptr) {
@@ -496,6 +566,7 @@ namespace super_odometry {
         // rotate gyroscope
         Eigen::Vector3d gyr(imu_in.angular_velocity.x, imu_in.angular_velocity.y,
                             imu_in.angular_velocity.z);
+        gyr *= config_.imu_gyr_scale;
         gyr=imu_laser_R_Gravity*gyr;
         imu_out.angular_velocity.x = gyr.x();
         imu_out.angular_velocity.y = gyr.y();
@@ -507,7 +578,7 @@ namespace super_odometry {
                             imu_in.linear_acceleration.y,
                             imu_in.linear_acceleration.z);
 
-        acc=imu_laser_R_Gravity*acc;
+        acc=imu_laser_R_Gravity*(config_.imu_acc_scale * acc);
         acc = acc + ((gyr - gyr_pre) * 200).cross(- imu_laser_T) + gyr.cross(gyr.cross(-imu_laser_T));
         imu_out.linear_acceleration.x = acc.x();
         imu_out.linear_acceleration.y = acc.y();
@@ -546,7 +617,6 @@ namespace super_odometry {
     
     // 1. Pre-process IMU data
     sensor_msgs::msg::Imu thisImu = imuConverter(*imu_raw);
-    assert(imu_raw->linear_acceleration.x != thisImu.linear_acceleration.x);
 
     // 2. Handle IMU initialization for LIVOX sensor
     if (!handleIMUInitialization(imu_raw, thisImu)) {
@@ -587,12 +657,14 @@ namespace super_odometry {
    void imuPreintegration::initializeImu(const sensor_msgs::msg::Imu::SharedPtr& imu_raw) {
     Imu::Ptr imudata = std::make_shared<Imu>();
     imudata->time = imu_raw->header.stamp.sec + imu_raw->header.stamp.nanosec * 1e-9;
-    imudata->acc = Eigen::Vector3d(imu_raw->linear_acceleration.x,
+    imudata->acc = config_.imu_acc_scale *
+                  Eigen::Vector3d(imu_raw->linear_acceleration.x,
                                   imu_raw->linear_acceleration.y,
                                   imu_raw->linear_acceleration.z);
     imudata->gyr = Eigen::Vector3d(imu_raw->angular_velocity.x,
                                   imu_raw->angular_velocity.y,
                                   imu_raw->angular_velocity.z);
+    imudata->gyr *= config_.imu_gyr_scale;
     imudata->q_w_i = Eigen::Quaterniond(imu_raw->orientation.w,
                                        imu_raw->orientation.x,
                                        imu_raw->orientation.y,

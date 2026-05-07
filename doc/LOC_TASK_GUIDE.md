@@ -60,7 +60,13 @@ DEPENDENCY_WS_ROOT=/path/to/dependency_ws bash script/build_superodom_local.sh
 Single bag:
 
 ```bash
-bash script/run_superodom.sh mapping-bag --skip-build data_bag/K-rail1 run_name
+bash script/run_superodom.sh mapping-bag --lidar mid360 --skip-build data_bag/K-rail1 run_name
+```
+
+The same entrypoint also supports Unitree A2 / JT128 bags:
+
+```bash
+bash script/run_superodom.sh mapping-bag --lidar jt128 krail jt128_krail
 ```
 
 Batch mapping across every bag under `data_bag/`:
@@ -106,7 +112,7 @@ This avoids a single shared `start_pose.txt` file for all maps.
 Bag replay + prior map localization:
 
 ```bash
-bash script/run_superodom.sh localization-bag --skip-build \
+bash script/run_superodom.sh localization-bag --lidar mid360 --skip-build \
   data_bag/K-rail1 \
   /abs/path/to/prior_map.pcd \
   robocup_loc
@@ -116,16 +122,16 @@ This script:
 
 - launches localization mode
 - loads the prior map
-- optionally opens RViz
+- opens RViz by default
 - waits for `/initialpose`
 - then starts `ros2 bag play`
 
 ## Live Robot Localization
 
-For real hardware, use the dedicated live script:
+For real hardware, use the same unified runner without a bag path:
 
 ```bash
-bash script/run_superodom.sh localization-live --skip-build \
+bash script/run_superodom.sh localization-live --lidar mid360 --skip-build \
   /abs/path/to/prior_map.pcd \
   robocup_live_loc
 ```
@@ -135,19 +141,35 @@ It only launches the nodes and waits for live robot topics.
 
 ## Required Live Topics
 
-With the provided Livox config, the robot must publish:
+With `--lidar mid360`, the robot must publish:
 
 - lidar topic: `/livox/lidar`
   type: `livox_ros_driver2/msg/CustomMsg`
 - imu topic: `/livox/imu`
   type: `sensor_msgs/msg/Imu`
 
-If your robot uses different names, create another config file and override:
+With `--lidar jt128`, the default live Unitree A2 front topics are:
+
+- lidar topic: `/rt/unitree/slam_lidar/points1`
+  type: `sensor_msgs/msg/PointCloud2`
+- imu topic: `/rt/unitree/slam_lidar/imu1`
+  type: `sensor_msgs/msg/Imu`
+
+If your robot uses different names, pass explicit topics:
+
+```bash
+bash script/run_superodom.sh mapping-live --lidar jt128 \
+  --point-topic /your/points \
+  --imu-topic /your/imu \
+  live_custom_topics
+```
+
+For older config-based overrides, create another config file and override:
 
 - `laser_topic`
 - `imu_topic`
 
-via `CONFIG_FILE=...`.
+via `--config-file ...`.
 
 ## RViz Initial Pose Behavior
 
@@ -214,16 +236,16 @@ Supported modes:
 
 - `mapping-bag`
   Example:
-  `bash script/run_superodom.sh mapping-bag --skip-build data_bag/ramp1 smoke_ramp1`
+  `bash script/run_superodom.sh mapping-bag --lidar mid360 --skip-build data_bag/ramp1 smoke_ramp1`
 - `mapping-live`
   Example:
-  `bash script/run_superodom.sh mapping-live --skip-build live_map_run`
+  `bash script/run_superodom.sh mapping-live --lidar jt128 --skip-build live_map_run`
 - `localization-bag`
   Example:
-  `bash script/run_superodom.sh localization-bag --skip-build data_bag/K-rail1 /abs/path/map.pcd loc_replay`
+  `bash script/run_superodom.sh localization-bag --lidar mid360 --skip-build data_bag/K-rail1 /abs/path/map.pcd loc_replay`
 - `localization-live`
   Example:
-  `bash script/run_superodom.sh localization-live --skip-build /abs/path/map.pcd loc_live`
+  `bash script/run_superodom.sh localization-live --lidar mid360 --skip-build /abs/path/map.pcd loc_live`
 
 ## Local Dependency Workspace
 
