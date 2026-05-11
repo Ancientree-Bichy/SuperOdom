@@ -111,7 +111,7 @@ namespace super_odometry {
         void vioRemovePointDistortion(double lidar_start_time, double lidar_end_time, MapRingBuffer<nav_msgs::msg::Odometry::SharedPtr>&vioBuf,
                                     pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &lidar_msg);
 
-        void undistortionAndFeatureExtraction();
+        bool undistortionAndFeatureExtraction();
 
         void extractFeatures(double lidar_start_time, const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& lidar_msg, const Eigen::Quaterniond& quaternion);
 

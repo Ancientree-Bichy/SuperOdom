@@ -176,7 +176,7 @@ Visualization Manager:
       Class: rviz_default_plugins/Odometry
       Enabled: true
       Keep: 1
-      Name: Odometry
+      Name: Body Odometry
       Position Tolerance: 0.10000000149011612
       Shape:
         Alpha: 1
@@ -190,7 +190,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /laser_odometry
+        Value: /body_odometry
       Value: true
     - Class: rviz_default_plugins/TF
       Enabled: true

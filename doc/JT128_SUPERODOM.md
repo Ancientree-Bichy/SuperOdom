@@ -72,18 +72,36 @@ default A2 adapter output remains in the raw front JT128 frame
 feature-extraction config waits for IMU initialization, then applies
 SuperOdom's IMU-derived gravity alignment to JT128 points and labels those
 feature clouds as `front_hesai_jt128_gravity`. `imu_preintegration_node`
-applies the same alignment to IMU measurements. The planner-facing `base_link`
-odometry then applies the raw front-LiDAR to body transform:
+applies the same alignment to IMU measurements. SuperOdom odometry is therefore
+for the gravity-aligned virtual frame, not the raw adapter frame. In RViz that
+virtual frame appears as X/red left, Y/green back, Z/blue up. The planner-facing
+`base_link` odometry converts this virtual frame to ROS body axes:
 
 ```text
 front_lidar -> base_link:
   t = [0.33767, 0.0, 0.08134]
-  R = [0,0,1; 1,0,0; 0,1,0]
+  R_body_from_gravity = [0,-1,0; 1,0,0; 0,0,1]
+  xyzrpy = [0.33767, 0.0, 0.08134, 0.0, 0.0, 1.57079632679]
 
 rear_lidar -> front_lidar:
   t = [0.0, 0.00599, -0.61764]
   R = [-1,0,0; 0,1,0; 0,0,-1]
 ```
+
+For JT128 localization, RViz `2D Pose Estimate` is configured as a robot-body
+initial pose, not as a LiDAR-frame pose:
+
+```yaml
+laser_mapping_node:
+  rviz_initial_pose_frame: "base_link"
+  rviz_initial_pose_lidar_to_body_xyzrpy: [0.33767, 0.0, 0.08134, 0.0, 0.0, 1.57079632679]
+```
+
+The arrow you draw in RViz therefore means `base_link` +X, i.e. robot forward,
+in the `map` frame. `laser_mapping_node` converts that body pose to the
+internal `front_hesai_jt128_gravity` pose before resetting SuperOdom's
+localization state. Without this conversion the same RViz arrow would be
+interpreted as the virtual JT128 frame's +X axis, which points robot-left.
 
 The same document states that the JT128 internal IMU and LiDAR have no
 physical rotation or translation offset. The committed SuperOdom calibration is

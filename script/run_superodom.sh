@@ -18,7 +18,7 @@ Usage:
   $(basename "$0") localization-live [options] <prior_map_pcd> [run_name]
 
 Core options:
-  --lidar MODEL             mid360, jt128, or jt128-mid360. Default: mid360
+  --lidar MODEL             mid360 or jt128. Default: mid360
   --skip-build              Reuse the current install tree
   --rviz / --no-rviz        RViz is enabled by default when DISPLAY is set
   --rate RATE               ros2 bag play rate. Default: 1.0
@@ -31,7 +31,6 @@ JT128 options:
                             Select Unitree A2 front, rear, or fused topics
   --point-topic TOPIC       Override LiDAR point cloud topic
   --imu-topic TOPIC         Override IMU topic
-  --mid360-params           Alias for --lidar jt128-mid360
 
 Localization / SuperLoc options:
   --no-wait-initial-pose    Do not wait for RViz /initialpose before playback
@@ -159,7 +158,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --lidar)
-      LIDAR_MODEL=${2:?--lidar requires mid360, jt128, or jt128-mid360}
+      LIDAR_MODEL=${2:?--lidar requires mid360 or jt128}
       SCRIPT_FLAGS+=("$1" "$2")
       shift 2
       ;;
@@ -171,11 +170,6 @@ while [[ $# -gt 0 ]]; do
     --jt128)
       LIDAR_MODEL="jt128"
       SCRIPT_FLAGS+=("--lidar" "jt128")
-      shift
-      ;;
-    --mid360-params)
-      LIDAR_MODEL="jt128-mid360"
-      SCRIPT_FLAGS+=("--lidar" "jt128-mid360")
       shift
       ;;
     --front)
@@ -305,9 +299,6 @@ case "$LIDAR_MODEL" in
     ;;
   jt128|hesai)
     LIDAR_MODEL="jt128"
-    ;;
-  jt128-mid360|jt128_mid360|hesai-mid360)
-    LIDAR_MODEL="jt128-mid360"
     ;;
   *)
     echo "Unknown --lidar value: $LIDAR_MODEL" >&2
@@ -461,11 +452,7 @@ if [[ "$LIDAR_MODEL" == "mid360" ]]; then
   DEFAULT_LAUNCH="livox_mid360.launch.py"
   DEFAULT_OUTPUT_PREFIX=""
 else
-  if [[ "$LIDAR_MODEL" == "jt128-mid360" ]]; then
-    DEFAULT_CONFIG="$ROOT_DIR/super_odometry/config/hesai_jt128_mid360_params.yaml"
-  else
-    DEFAULT_CONFIG="$ROOT_DIR/super_odometry/config/hesai_jt128.yaml"
-  fi
+  DEFAULT_CONFIG="$ROOT_DIR/super_odometry/config/hesai_jt128.yaml"
   DEFAULT_CALIBRATION="$ROOT_DIR/super_odometry/config/hesai/jt128_calibration.yaml"
   DEFAULT_RVIZ="$ROOT_DIR/super_odometry/rviz_jt128_debug.rviz"
   DEFAULT_LAUNCH="hesai_jt128_superodom.launch.py"
@@ -609,6 +596,7 @@ PY
 
 USE_RVIZ_INITIAL_POSE_CFG=$(read_config_value laser_mapping_node.use_rviz_initial_pose)
 RVIZ_XY_YAW_ONLY_CFG=$(read_config_value laser_mapping_node.rviz_initial_pose_xy_yaw_only)
+RVIZ_INITIAL_POSE_FRAME_CFG=$(read_config_value laser_mapping_node.rviz_initial_pose_frame)
 LASER_TOPIC_CFG=$(read_config_value laser_topic)
 IMU_TOPIC_CFG=$(read_config_value imu_topic)
 
@@ -656,6 +644,7 @@ skip_build=$SKIP_BUILD
 enable_rviz=$ENABLE_RVIZ
 enable_monitor=$ENABLE_MONITOR
 wait_for_initial_pose=$WAIT_FOR_INITIAL_POSE
+rviz_initial_pose_frame=$RVIZ_INITIAL_POSE_FRAME_CFG
 record_output=$RECORD_OUTPUT
 play_rate=$PLAY_RATE
 startup_delay_sec=$STARTUP_DELAY_SEC

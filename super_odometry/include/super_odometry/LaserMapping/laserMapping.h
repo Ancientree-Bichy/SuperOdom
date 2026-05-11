@@ -76,6 +76,9 @@ namespace super_odometry {
         float read_pose_file;
         bool use_rviz_initial_pose;
         bool rviz_initial_pose_xy_yaw_only;
+        std::string rviz_initial_pose_frame;
+        bool rviz_initial_pose_is_body_frame;
+        bool rviz_initial_pose_extrinsic_rpy_degrees;
         bool paper_repro_enable_prediction_source_switching;
         bool paper_repro_enable_active_degeneracy_absolute_pose_constraint;
         bool paper_repro_enable_degeneracy_state_from_uncertainty_gate;
@@ -169,6 +172,8 @@ namespace super_odometry {
         void updatePoseAndPublish();
 
         void initialPoseHandler(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
+
+        Transformd convertRvizInitialPoseToSensorFrame(const Transformd& pose) const;
 
         bool manualInitialPoseReady();
 
@@ -265,6 +270,7 @@ namespace super_odometry {
 
         std::mutex initial_pose_mutex_;
         Transformd manual_initial_pose_;
+        Transformd rviz_initial_pose_lidar_to_body_;
 
         pcl::VoxelGrid<PointType> downSizeFilterCorner;
         pcl::VoxelGrid<PointType> downSizeFilterSurf;

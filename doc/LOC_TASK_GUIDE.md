@@ -177,6 +177,8 @@ Current localization config is:
 
 - `use_rviz_initial_pose: true`
 - `rviz_initial_pose_xy_yaw_only: true`
+- `rviz_initial_pose_frame: "sensor"` by default, or `"base_link"` in the JT128
+  A2 config
 
 This means RViz `2D Pose Estimate` is interpreted as:
 
@@ -187,7 +189,10 @@ This means RViz `2D Pose Estimate` is interpreted as:
 - preserve configured `roll`
 - preserve configured `pitch`
 
-That behavior is intentional for prior maps that are already approximately `z-up`.
+That behavior is intentional for prior maps that are already approximately
+`z-up`. For JT128, the RViz arrow is the robot `base_link` +X direction in
+`map`; the mapper converts it to SuperOdom's internal gravity-aligned LiDAR
+frame before applying the reset.
 
 ## Recommended Startup Sequence
 

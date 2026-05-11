@@ -4,12 +4,47 @@
 
 #include "super_odometry/LaserMapping/laserMapping.h"
 
+#include <algorithm>
+#include <cctype>
+
 double parameters[7] = {0, 0, 0, 0, 0, 0, 1};
 Eigen::Map<Eigen::Vector3d> t_w_curr(parameters);
 Eigen::Map<Eigen::Quaterniond> q_w_curr(parameters+3);
 
 Eigen::Vector3d vel_b;
 Eigen::Vector3d ang_vel_b;
+
+namespace {
+
+std::string normalizeFrameName(std::string frame_name) {
+    std::transform(frame_name.begin(), frame_name.end(), frame_name.begin(),
+                   [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+    return frame_name;
+}
+
+Eigen::Quaterniond quaternionFromRpy(double roll, double pitch, double yaw) {
+    Eigen::Quaterniond q =
+        Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()) *
+        Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *
+        Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX());
+    q.normalize();
+    return q;
+}
+
+Transformd transformFromXyzRpy(const std::vector<double>& xyzrpy, bool rpy_degrees) {
+    const double scale = rpy_degrees ? M_PI / 180.0 : 1.0;
+    return Transformd(
+        quaternionFromRpy(xyzrpy[3] * scale, xyzrpy[4] * scale, xyzrpy[5] * scale),
+        Eigen::Vector3d(xyzrpy[0], xyzrpy[1], xyzrpy[2]));
+}
+
+void getRpy(const Eigen::Quaterniond& q, double& roll, double& pitch, double& yaw) {
+    Eigen::Quaterniond normalized = q.normalized();
+    tf2::Quaternion orientation(normalized.x(), normalized.y(), normalized.z(), normalized.w());
+    tf2::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
+}
+
+}  // namespace
 
 namespace super_odometry {
 
@@ -237,6 +272,11 @@ namespace super_odometry {
         this->declare_parameter("laser_mapping_node.read_pose_file", false);
         this->declare_parameter("laser_mapping_node.use_rviz_initial_pose", false);
         this->declare_parameter("laser_mapping_node.rviz_initial_pose_xy_yaw_only", false);
+        this->declare_parameter("laser_mapping_node.rviz_initial_pose_frame", "sensor");
+        this->declare_parameter<std::vector<double>>(
+            "laser_mapping_node.rviz_initial_pose_lidar_to_body_xyzrpy",
+            std::vector<double>{0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+        this->declare_parameter("laser_mapping_node.rviz_initial_pose_extrinsic_rpy_degrees", false);
         this->declare_parameter("laser_mapping_node.init_x", 0.0);
         this->declare_parameter("laser_mapping_node.init_y", 0.0);
         this->declare_parameter("laser_mapping_node.init_z", 0.0);
@@ -294,22 +334,35 @@ namespace super_odometry {
         config_.use_rviz_initial_pose = this->get_parameter("laser_mapping_node.use_rviz_initial_pose").as_bool();
         config_.rviz_initial_pose_xy_yaw_only =
             this->get_parameter("laser_mapping_node.rviz_initial_pose_xy_yaw_only").as_bool();
-        config_.use_imu_roll_pitch = USE_IMU_ROLL_PITCH;
-
-        if (config_.localization_mode && config_.use_rviz_initial_pose) {
-            if (config_.rviz_initial_pose_xy_yaw_only) {
-                RCLCPP_INFO(this->get_logger(),
-                            "RViz initial pose mode: x/y/yaw only; z/roll/pitch stay at configured values "
-                            "(z=%.3f, roll=%.3f, pitch=%.3f).",
-                            config_.init_z, config_.init_roll, config_.init_pitch);
-            } else {
-                RCLCPP_INFO(this->get_logger(),
-                            "RViz initial pose mode: full pose from /initialpose.");
-            }
-        } else if (config_.localization_mode) {
-            RCLCPP_INFO(this->get_logger(),
-                        "RViz initial pose mode: disabled; using configured init pose or pose file.");
+        config_.rviz_initial_pose_frame = normalizeFrameName(
+            this->get_parameter("laser_mapping_node.rviz_initial_pose_frame").as_string());
+        if (config_.rviz_initial_pose_frame == "base_link" ||
+            config_.rviz_initial_pose_frame == "body") {
+            config_.rviz_initial_pose_is_body_frame = true;
+        } else if (config_.rviz_initial_pose_frame == "sensor" ||
+                   config_.rviz_initial_pose_frame == "lidar") {
+            config_.rviz_initial_pose_is_body_frame = false;
+        } else {
+            RCLCPP_WARN(this->get_logger(),
+                        "Unknown laser_mapping_node.rviz_initial_pose_frame '%s'. "
+                        "Falling back to sensor-frame interpretation.",
+                        config_.rviz_initial_pose_frame.c_str());
+            config_.rviz_initial_pose_frame = "sensor";
+            config_.rviz_initial_pose_is_body_frame = false;
         }
+        config_.rviz_initial_pose_extrinsic_rpy_degrees =
+            this->get_parameter("laser_mapping_node.rviz_initial_pose_extrinsic_rpy_degrees").as_bool();
+        auto initial_pose_lidar_to_body =
+            this->get_parameter("laser_mapping_node.rviz_initial_pose_lidar_to_body_xyzrpy").as_double_array();
+        if (initial_pose_lidar_to_body.size() != 6) {
+            RCLCPP_WARN(this->get_logger(),
+                        "laser_mapping_node.rviz_initial_pose_lidar_to_body_xyzrpy must contain "
+                        "[x, y, z, roll, pitch, yaw]. Falling back to identity.");
+            initial_pose_lidar_to_body = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+        }
+        rviz_initial_pose_lidar_to_body_ = transformFromXyzRpy(
+            initial_pose_lidar_to_body, config_.rviz_initial_pose_extrinsic_rpy_degrees);
+        config_.use_imu_roll_pitch = USE_IMU_ROLL_PITCH;
 
         if(config_.read_pose_file)
         {   
@@ -330,6 +383,24 @@ namespace super_odometry {
             config_.init_roll = get_parameter("laser_mapping_node.init_roll").as_double();
             config_.init_pitch = get_parameter("laser_mapping_node.init_pitch").as_double();
             config_.init_yaw = get_parameter("laser_mapping_node.init_yaw").as_double(); 
+        }
+
+        if (config_.localization_mode && config_.use_rviz_initial_pose) {
+            if (config_.rviz_initial_pose_xy_yaw_only) {
+                RCLCPP_INFO(this->get_logger(),
+                            "RViz initial pose mode: x/y/yaw only in %s frame; "
+                            "z/roll/pitch stay at configured values "
+                            "(z=%.3f, roll=%.3f, pitch=%.3f).",
+                            config_.rviz_initial_pose_frame.c_str(),
+                            config_.init_z, config_.init_roll, config_.init_pitch);
+            } else {
+                RCLCPP_INFO(this->get_logger(),
+                            "RViz initial pose mode: full pose from /initialpose in %s frame.",
+                            config_.rviz_initial_pose_frame.c_str());
+            }
+        } else if (config_.localization_mode) {
+            RCLCPP_INFO(this->get_logger(),
+                        "RViz initial pose mode: disabled; using configured init pose or pose file.");
         }
 
         return true;
@@ -450,8 +521,15 @@ void laserMapping::initializeWithIMU(){
     } 
 }
 
+Transformd laserMapping::convertRvizInitialPoseToSensorFrame(const Transformd& pose) const {
+    if (!config_.rviz_initial_pose_is_body_frame) {
+        return pose;
+    }
+    return pose * rviz_initial_pose_lidar_to_body_;
+}
+
 void laserMapping::initialPoseHandler(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
-    Transformd pose;
+    Transformd rviz_pose;
     double roll = 0.0;
     double pitch = 0.0;
     double yaw = 0.0;
@@ -464,7 +542,7 @@ void laserMapping::initialPoseHandler(const geometry_msgs::msg::PoseWithCovarian
     tf2::Quaternion orientation(input_rot.x(), input_rot.y(), input_rot.z(), input_rot.w());
     tf2::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
 
-    pose.pos = Eigen::Vector3d(
+    rviz_pose.pos = Eigen::Vector3d(
         msg->pose.pose.position.x,
         msg->pose.pose.position.y,
         config_.rviz_initial_pose_xy_yaw_only ? config_.init_z : msg->pose.pose.position.z);
@@ -472,7 +550,7 @@ void laserMapping::initialPoseHandler(const geometry_msgs::msg::PoseWithCovarian
     if (config_.rviz_initial_pose_xy_yaw_only) {
         tf2::Quaternion planar_orientation;
         planar_orientation.setRPY(config_.init_roll, config_.init_pitch, yaw);
-        pose.rot = Eigen::Quaterniond(
+        rviz_pose.rot = Eigen::Quaterniond(
             planar_orientation.w(),
             planar_orientation.x(),
             planar_orientation.y(),
@@ -480,8 +558,18 @@ void laserMapping::initialPoseHandler(const geometry_msgs::msg::PoseWithCovarian
         roll = config_.init_roll;
         pitch = config_.init_pitch;
     } else {
-        pose.rot = input_rot;
+        rviz_pose.rot = input_rot;
     }
+    rviz_pose.rot.normalize();
+
+    if (!msg->header.frame_id.empty() && msg->header.frame_id != WORLD_FRAME) {
+        RCLCPP_WARN(this->get_logger(),
+                    "Received /initialpose in frame '%s', but SuperOdom world frame is '%s'. "
+                    "The pose will still be interpreted in the configured world frame.",
+                    msg->header.frame_id.c_str(), WORLD_FRAME.c_str());
+    }
+
+    Transformd pose = convertRvizInitialPoseToSensorFrame(rviz_pose);
     pose.rot.normalize();
 
     {
@@ -491,9 +579,19 @@ void laserMapping::initialPoseHandler(const geometry_msgs::msg::PoseWithCovarian
         pending_manual_initial_pose_ = true;
     }
 
+    double sensor_roll = 0.0;
+    double sensor_pitch = 0.0;
+    double sensor_yaw = 0.0;
+    getRpy(pose.rot, sensor_roll, sensor_pitch, sensor_yaw);
     RCLCPP_INFO(this->get_logger(),
-                "Received manual initial pose: xyz=(%.3f, %.3f, %.3f) rpy=(%.3f, %.3f, %.3f)",
-                pose.pos.x(), pose.pos.y(), pose.pos.z(), roll, pitch, yaw);
+                "Received manual initial pose in %s frame: xyz=(%.3f, %.3f, %.3f) "
+                "rpy=(%.3f, %.3f, %.3f). Applied sensor-frame pose: "
+                "xyz=(%.3f, %.3f, %.3f) rpy=(%.3f, %.3f, %.3f)",
+                config_.rviz_initial_pose_frame.c_str(),
+                rviz_pose.pos.x(), rviz_pose.pos.y(), rviz_pose.pos.z(),
+                roll, pitch, yaw,
+                pose.pos.x(), pose.pos.y(), pose.pos.z(),
+                sensor_roll, sensor_pitch, sensor_yaw);
 }
 
 bool laserMapping::manualInitialPoseReady() {

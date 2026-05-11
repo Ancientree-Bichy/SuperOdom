@@ -60,16 +60,15 @@ This repository is a ROS 2 Humble workspace for `SuperOdom`.
 - Do not use the JT128 manual vertical-angle table in the normal SuperOdom
   adapter path. It is only relevant for raw packet decoding or a diagnostic
   fallback when a future bridge omits channel data.
-- For Mid360-style JT128 experiments, use
-  `bash script/run_superodom.sh mapping-bag --lidar jt128-mid360 <bag> <run>`.
-  This keeps `sensor: "jt128"` and only changes feature/mapping tuning. Do not
-  set JT128 configs to `sensor: "livox"` unless the adapter is changed to
-  publish `livox_ros_driver2::msg::CustomMsg`.
 - JT128 configs enable lightweight LIO diagnostics by default. Inspect
   `[LIO_DIAG]` lines in the launch log and `/super_odometry_stats` before
   changing algorithm parameters. Key fields are motion rejection reason, plane
   match success/rejection histogram, surface sample count, and observability
   counts for xyz/rpy.
+- Keep `laser_mapping_node.auto_voxel_size: false` in JT128 configs when
+  evaluating tuned `mapping_plane_resolution` values. The legacy auto voxel
+  heuristic can override the configured plane resolution from scene range and
+  make JT128 LIO sweeps non-deterministic.
 - Current JT128 LIO front-end candidate values are
   `mapping_plane_resolution: 0.4`, `plane_neighbor_distance_factor: 4.0`,
   `plane_pca_min_ratio: 0.05`, and
@@ -89,10 +88,17 @@ This repository is a ROS 2 Humble workspace for `SuperOdom`.
 - Publish planner-facing robot body pose with `odom_frame_transform_node`
   instead. It converts `/imu_odometry` or `/laser_odometry` into `/body_odometry`
   and can publish `map -> base_link`.
-- Because the adapter output remains in the raw front-JT128 frame,
-  `odom_frame_transform_node.lidar_to_body_xyzrpy` should include both the
-  front-LiDAR-origin to base-link translation and the raw front-JT128 to
-  `base_link` rotation.
+- SuperOdom JT128 odometry is for the gravity-aligned virtual LiDAR frame
+  (`front_hesai_jt128_gravity`), not the raw adapter frame. That virtual frame
+  appears in RViz as X/red left, Y/green back, Z/blue up. Use a yaw-only
+  `lidar_to_body_xyzrpy` rotation from this virtual frame to ROS `base_link`
+  (X front, Y left, Z up), while keeping the Unitree structural translation.
+- JT128 localization should interpret RViz `/initialpose` as the robot
+  `base_link` pose in `map`, then convert it to the internal
+  `front_hesai_jt128_gravity` pose with the same structural transform. Keep
+  `laser_mapping_node.rviz_initial_pose_frame: "base_link"` and
+  `rviz_initial_pose_lidar_to_body_xyzrpy` aligned with the final body-odom
+  transform unless calibrated values replace the design extrinsic.
 - Unitree's A2 structural-design extrinsic for front JT128 to `base_link` is:
   - translation `[0.33767, 0.0, 0.08134]`
   - rotation `[0,0,1; 1,0,0; 0,1,0]`

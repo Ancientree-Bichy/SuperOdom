@@ -220,7 +220,7 @@ namespace super_odometry {
             RCLCPP_WARN_STREAM(this->get_logger(), "meas_end_time < lidar_end_time ||"
                             " message order is not perfect! please restart velodyne and imu driver!");
             RCLCPP_WARN(this->get_logger(), "meas_end_time %f <  %f lidar_end_time", meas_end_time, lidar_end_time);
-            RCLCPP_WARN(this->get_logger(), "All the lidar data is more recent than all the imu data. Will throw away lidar frame");
+            RCLCPP_WARN(this->get_logger(), "All the lidar data is more recent than all the imu data. Will wait for more measurements");
 
             return false;
         }
@@ -470,7 +470,7 @@ namespace super_odometry {
     }
 
 
-    void featureExtraction::undistortionAndFeatureExtraction()      
+    bool featureExtraction::undistortionAndFeatureExtraction()
     {
         LASER_IMU_SYNC_SCCUESS = synchronize_measurements<Imu::Ptr>(imuBuf, lidarBuf);
         LASER_CAMERA_SYNC_SUCCESS = synchronize_measurements<nav_msgs::msg::Odometry::SharedPtr>(visualOdomBuf, lidarBuf);
@@ -511,25 +511,29 @@ namespace super_odometry {
 
             LASER_CAMERA_SYNC_SUCCESS = false;
             LASER_IMU_SYNC_SCCUESS = false;
+            return true;
         
         }
         else if (imuBuf.empty())
         {
-            double lidar_start_time;
-            lidarBuf.getFirstTime(lidar_start_time);
+            double lidar_start_time = 0.0;
             pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr lidar_msg;
-            lidarBuf.getFirstMeas(lidar_msg);
-            double lidar_end_time = lidar_start_time + lidar_msg->back().time;
+            if (!lidarBuf.getFirstTime(lidar_start_time) ||
+                !lidarBuf.getFirstMeas(lidar_msg)) {
+                return false;
+            }
 
             RCLCPP_INFO(this->get_logger(), "\033[1;32m----> no IMU data, running LiDAR Odometry only.\033[0m");
             Eigen::Quaterniond default_quaternion = Eigen::Quaterniond::Identity();
             
             // Extract features and publish with default quaternion
             extractFeatures(lidar_start_time, lidar_msg, default_quaternion);
+            return true;
         }
         else
         {
-            RCLCPP_WARN(this->get_logger(), "sync unsuccessfull, skipping scan frame");
+            RCLCPP_WARN(this->get_logger(), "sync unsuccessful, waiting for more measurements");
+            return false;
         }
         
     }
@@ -844,10 +848,12 @@ namespace super_odometry {
 
         if(IMU_INIT==true or imuBuf.empty())
         {   
-            undistortionAndFeatureExtraction();
-            double lidar_first_time;
-            lidarBuf.getFirstTime(lidar_first_time);
-            lidarBuf.clean(lidar_first_time);
+            const bool processed_lidar = undistortionAndFeatureExtraction();
+            if (processed_lidar && lidarBuf.getSize() > 0) {
+                double lidar_first_time;
+                lidarBuf.getFirstTime(lidar_first_time);
+                lidarBuf.clean(lidar_first_time);
+            }
         }
 
         m_buf.unlock();
@@ -895,10 +901,12 @@ namespace super_odometry {
 
         if(IMU_INIT==true or imuBuf.empty())
         {   
-            undistortionAndFeatureExtraction();
-            double lidar_first_time;
-            lidarBuf.getFirstTime(lidar_first_time);
-            lidarBuf.clean(lidar_first_time);
+            const bool processed_lidar = undistortionAndFeatureExtraction();
+            if (processed_lidar && lidarBuf.getSize() > 0) {
+                double lidar_first_time;
+                lidarBuf.getFirstTime(lidar_first_time);
+                lidarBuf.clean(lidar_first_time);
+            }
         }
 
         m_buf.unlock();

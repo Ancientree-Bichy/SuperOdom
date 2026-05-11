@@ -10,8 +10,8 @@
 
     world_frame: "map"
     world_frame_rot: "map_rot"
-    sensor_frame: "front_hesai_jt128"
-    sensor_frame_rot: "front_hesai_jt128_rot"
+    sensor_frame: "front_hesai_jt128_gravity"
+    sensor_frame_rot: "front_hesai_jt128_gravity_rot"
 
     imu_acc_x_limit: 0.5
     imu_acc_y_limit: 0.2
@@ -35,6 +35,9 @@
     laser_mapping_node:
       mapping_line_resolution: 0.1
       mapping_plane_resolution: 0.4
+      # Keep JT128 plane/map gates deterministic. The legacy auto voxel heuristic
+      # can override mapping_plane_resolution at runtime based on scene range.
+      auto_voxel_size: false
       max_iterations: 5
       max_surface_features: 3000
       lio_diagnostics_enabled: true
@@ -47,6 +50,11 @@
       read_pose_file: false
       use_rviz_initial_pose: false
       rviz_initial_pose_xy_yaw_only: true
+      # RViz 2D Pose Estimate should describe the robot body pose in map.
+      # Laser mapping converts this to the internal gravity-aligned JT128 frame.
+      rviz_initial_pose_frame: "base_link"
+      rviz_initial_pose_lidar_to_body_xyzrpy: [0.33767, 0.0, 0.08134, 0.0, 0.0, 1.57079632679]
+      rviz_initial_pose_extrinsic_rpy_degrees: false
       init_x: 0.0
       init_y: 0.0
       init_z: 0.0
@@ -100,6 +108,8 @@ odom_frame_transform_node:
     output_child_frame: "base_link"
     publish_tf: true
     extrinsic_rpy_degrees: false
-    # Unitree A2 structural-design extrinsic from raw front JT128 frame to
-    # base_link. This is a design value, not a hand-eye calibrated value.
-    lidar_to_body_xyzrpy: [0.33767, 0.0, 0.08134, 1.57079632679, 0.0, 1.57079632679]
+    # SuperOdom publishes odometry for the gravity-aligned JT128 virtual frame:
+    # X left, Y back, Z up. Convert that frame to ROS base_link:
+    # X front, Y left, Z up. Translation is the Unitree structural-design
+    # front-LiDAR origin in base_link; this is not hand-eye calibrated.
+    lidar_to_body_xyzrpy: [0.33767, 0.0, 0.08134, 0.0, 0.0, 1.57079632679]
