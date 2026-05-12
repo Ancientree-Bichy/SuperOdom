@@ -8,6 +8,7 @@ Panels:
         - /JT128 Converted Cloud1
         - /Registered Scan1
         - /Overall Map1
+        - /Local Map1
         - /Laser Path1
         - /IMU Path1
         - /Odometry1
@@ -127,6 +128,34 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /overall_map
+      Use Fixed Frame: true
+      Use rainbow: false
+      Value: true
+    - Alpha: 0.550000011920929
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 0; 210; 120
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Name: Local Map
+      Position Transformer: XYZ
+      Selectable: false
+      Size (Pixels): 3
+      Size (m): 0.02500000037252903
+      Style: Flat Squares
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /laser_cloud_map
       Use Fixed Frame: true
       Use rainbow: false
       Value: true
