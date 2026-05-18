@@ -149,6 +149,7 @@ namespace super_odometry {
         slam.Pos_degeneracy_threshold=config_.pos_degeneracy_threshold;
         slam.Ori_degeneracy_threshold=config_.ori_degeneracy_threshold;
         slam.LocalizationICPMaxIter=config_.max_iterations;
+        slam.LocalizationPlaneDistanceNbrNeighbors=static_cast<size_t>(config_.plane_knn_neighbors);
         slam.OptSet.debug_view_enabled=config_.debug_view_enabled;
         slam.OptSet.velocity_failure_threshold=config_.velocity_failure_threshold;
         slam.OptSet.max_surface_features=config_.max_surface_features;
@@ -248,6 +249,7 @@ namespace super_odometry {
         this->declare_parameter("laser_mapping_node.lio_diagnostics_enabled", false);
         this->declare_parameter("laser_mapping_node.max_surface_features", 2000);
         this->declare_parameter("laser_mapping_node.lio_diagnostics_period", 20);
+        this->declare_parameter("laser_mapping_node.plane_knn_neighbors", 5);
         this->declare_parameter("laser_mapping_node.plane_neighbor_distance_factor", 3.0);
         this->declare_parameter("laser_mapping_node.plane_pca_min_ratio", 0.1);
         this->declare_parameter("laser_mapping_node.plane_max_point_distance_factor", 0.5);
@@ -299,6 +301,13 @@ namespace super_odometry {
         config_.lio_diagnostics_period = this->get_parameter("laser_mapping_node.lio_diagnostics_period").as_int();
         if (config_.lio_diagnostics_period < 1) {
             config_.lio_diagnostics_period = 1;
+        }
+        config_.plane_knn_neighbors = this->get_parameter("laser_mapping_node.plane_knn_neighbors").as_int();
+        if (config_.plane_knn_neighbors < 3) {
+            RCLCPP_WARN(this->get_logger(),
+                        "laser_mapping_node.plane_knn_neighbors must be >= 3, clamping %d to 3",
+                        config_.plane_knn_neighbors);
+            config_.plane_knn_neighbors = 3;
         }
         config_.plane_neighbor_distance_factor = this->get_parameter("laser_mapping_node.plane_neighbor_distance_factor").as_double();
         config_.plane_pca_min_ratio = this->get_parameter("laser_mapping_node.plane_pca_min_ratio").as_double();

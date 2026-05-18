@@ -35,7 +35,7 @@ This repository is a ROS 2 Humble workspace for `SuperOdom`.
   - imu topic: `/livox/imu`
 - Unitree A2 / JT128 bag replay with RViz:
   - `bash script/run_superodom.sh mapping-bag --lidar jt128 ramp`
-  - Available bag names under `/home/bichy/robocup_ws/data/JT128bag`: `ramp`, `krail`, `krail1`
+  - Available bag names under `$ROBOCUP_WS/data/JT128bag`: `ramp`, `krail`, `krail1`
   - JT128 runs build into `.superodom_build/jt128` and `.superodom_install/jt128`.
 
 ## Unitree A2 / Hesai JT128 notes

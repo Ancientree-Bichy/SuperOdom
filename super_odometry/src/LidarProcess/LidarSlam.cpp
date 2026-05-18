@@ -701,14 +701,14 @@ LidarSLAM::OptimizationParameter LidarSLAM::ComputePlaneDistanceParameters(
         return result;
     }
     // 2. Set search parameters
-    const size_t requiredNearest = LocalizationPlaneDistanceNbrNeighbors;
+    const size_t requiredNearest = std::max<size_t>(3, LocalizationPlaneDistanceNbrNeighbors);
     const double square_max_dist = OptSet.plane_neighbor_distance_factor * local_map.planeRes_;
 
     // 3. Find nearest neighbors
     std::vector<Point> nearest_pts;
     std::vector<float> nearest_dist;
     if (!findNearestNeighbors(local_map, pFinal, nearest_pts, nearest_dist, 
-                             requiredNearest, 5, square_max_dist, result)) {
+                             requiredNearest, requiredNearest, square_max_dist, result)) {
         return result;
     }
 
@@ -973,11 +973,16 @@ double LidarSLAM::computePlaneQualityMetrics(const std::vector<Point>& nearest_p
                                           double &negative_OA_dot_norm,
                                           OptimizationParameter &result) {
     
+    if (nearest_pts.size() < 3) {
+        result.match_result = MatchingResult::NOT_ENOUGH_NEIGHBORS;
+        return 0.0;
+    }
+
      // 1. Set up the system of equations
-    Eigen::Matrix<double, 5, 3> matA0;
-    Eigen::Matrix<double, 5, 1> matB0 = -1 * Eigen::Matrix<double, 5, 1>::Ones();
+    Eigen::MatrixXd matA0(nearest_pts.size(), 3);
+    Eigen::VectorXd matB0 = -Eigen::VectorXd::Ones(nearest_pts.size());
     // 2. Fill matrix with point coordinates
-    for (int i = 0; i < 5; i++) {
+    for (size_t i = 0; i < nearest_pts.size(); i++) {
         matA0.row(i) << nearest_pts[i].x, nearest_pts[i].y, nearest_pts[i].z;
     }
     

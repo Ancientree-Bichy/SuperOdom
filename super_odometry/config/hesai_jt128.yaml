@@ -42,6 +42,7 @@
       max_surface_features: 3000
       lio_diagnostics_enabled: true
       lio_diagnostics_period: 10
+      plane_knn_neighbors: 5
       plane_neighbor_distance_factor: 4.0
       plane_pca_min_ratio: 0.05
       plane_max_point_distance_factor: 0.75
@@ -92,8 +93,8 @@ hesai_to_superodom_node:
     # Keep adapter-level range filtering explicitly disabled by default.
     # min_range is ignored unless enable_min_range_filter is true. Use
     # feature_extraction_node.min_range for LIO feature gating.
-    enable_min_range_filter: false
-    min_range: 0.0
+    enable_min_range_filter: true
+    min_range: 0.2
     extrinsic_rpy_degrees: false
     # Keep the adapter output in the raw front JT128 frame. Feature extraction
     # waits for IMU init, then publishes gravity-aligned feature clouds with

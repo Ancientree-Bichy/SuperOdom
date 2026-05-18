@@ -98,19 +98,29 @@ EOF
 fi
 
 mkdir -p "$SOPHUS_SHIM_DIR"
+export DEPENDENCY_WS_ROOT
+export SOPHUS_SOURCE_DIR
 
 cat >"$SOPHUS_SHIM_DIR/SophusConfig.cmake" <<EOF
 include(CMakeFindDependencyMacro)
 find_dependency(Eigen3 REQUIRED)
 
+set(_sophus_source_dir "\$ENV{SOPHUS_SOURCE_DIR}")
+if("\${_sophus_source_dir}" STREQUAL "" AND NOT "\$ENV{DEPENDENCY_WS_ROOT}" STREQUAL "")
+  set(_sophus_source_dir "\$ENV{DEPENDENCY_WS_ROOT}/Sophus")
+endif()
+if("\${_sophus_source_dir}" STREQUAL "")
+  message(FATAL_ERROR "Set SOPHUS_SOURCE_DIR or DEPENDENCY_WS_ROOT before finding Sophus")
+endif()
+
 if(NOT TARGET Sophus::Sophus)
   add_library(Sophus::Sophus INTERFACE IMPORTED)
   set_target_properties(Sophus::Sophus PROPERTIES
-    INTERFACE_INCLUDE_DIRECTORIES "${SOPHUS_SOURCE_DIR}"
+    INTERFACE_INCLUDE_DIRECTORIES "\${_sophus_source_dir}"
   )
 endif()
 
-set(Sophus_INCLUDE_DIRS "${SOPHUS_SOURCE_DIR}")
+set(Sophus_INCLUDE_DIRS "\${_sophus_source_dir}")
 set(Sophus_FOUND TRUE)
 EOF
 

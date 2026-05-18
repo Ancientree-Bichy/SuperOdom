@@ -213,11 +213,11 @@ Expected dual topics from the provided config:
 
 ## Run SuperOdom
 
-For the recorded bags under `/home/bichy/robocup_ws/data/JT128bag`, use the
+For the recorded bags under `$ROBOCUP_WS/data/JT128bag`, use the
 unified one-command runner. It starts SuperOdom, RViz, and `ros2 bag play`:
 
 ```bash
-cd /home/bichy/robocup_ws/SuperOdom
+cd $ROBOCUP_WS/SuperOdom
 bash script/run_superodom.sh mapping-bag --lidar jt128 ramp
 ```
 

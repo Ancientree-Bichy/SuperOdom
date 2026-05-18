@@ -54,6 +54,7 @@ namespace super_odometry {
         bool lio_diagnostics_enabled;
         int max_surface_features;
         int lio_diagnostics_period;
+        int plane_knn_neighbors;
         double plane_neighbor_distance_factor;
         double plane_pca_min_ratio;
         double plane_max_point_distance_factor;
