@@ -77,7 +77,7 @@
 
 odom_frame_transform_node:
   ros__parameters:
-    input_odom_topic: "/imu_odometry"
+    input_odom_topic: "/laser_odometry"
     output_odom_topic: "/body_odometry"
     output_child_frame: "base_link"
     publish_tf: true

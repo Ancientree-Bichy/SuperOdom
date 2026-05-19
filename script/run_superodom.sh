@@ -8,6 +8,15 @@ source "$ROOT_DIR/script/common_env.sh"
 DEPENDENCY_WS_ROOT=$(resolve_dependency_ws_root)
 PACKAGE_PLY_PATH="$ROOT_DIR/super_odometry/PLY/saved_scans.ply"
 DEFAULT_JT128_BAG_ROOT="$(dirname "$ROOT_DIR")/data/JT128bag"
+ROS_PYTHON_EXECUTABLE=${ROS_PYTHON_EXECUTABLE:-/usr/bin/python3}
+if [[ "$ROS_PYTHON_EXECUTABLE" != */* ]]; then
+  ROS_PYTHON_EXECUTABLE=$(command -v "$ROS_PYTHON_EXECUTABLE" || true)
+fi
+if [[ -z "$ROS_PYTHON_EXECUTABLE" || ! -x "$ROS_PYTHON_EXECUTABLE" ]]; then
+  echo "ROS Python executable not found: ${ROS_PYTHON_EXECUTABLE:-<empty>}" >&2
+  echo "Set ROS_PYTHON_EXECUTABLE=/usr/bin/python3 or another ROS Humble Python 3.10 executable." >&2
+  exit 1
+fi
 
 usage() {
   cat <<EOF
@@ -65,6 +74,8 @@ Environment overrides:
   EXTRA_PLAY_ARGS           Extra ros2 bag play args
   JT128_IMU_ACC_SCALE       Optional JT128 IMU acceleration scale override
   JT128_IMU_GYR_SCALE       Optional JT128 IMU gyro scale override
+  ROS_PYTHON_EXECUTABLE     Python used for ROS rclpy helpers. Default:
+                            $ROS_PYTHON_EXECUTABLE
 EOF
 }
 
@@ -518,7 +529,7 @@ if [[ "$LIDAR_MODEL" != "mid360" ]]; then
   LASER_TOPIC="$ADAPTER_OUTPUT_TOPIC"
 fi
 
-python3 - "$CONFIG_TEMPLATE_FILE" "$EFFECTIVE_CONFIG_FILE" "$LASER_TOPIC" "$IMU_TOPIC" \
+"$ROS_PYTHON_EXECUTABLE" - "$CONFIG_TEMPLATE_FILE" "$EFFECTIVE_CONFIG_FILE" "$LASER_TOPIC" "$IMU_TOPIC" \
   "$POINT_TOPIC" "$ADAPTER_OUTPUT_TOPIC" "$IS_LOCALIZATION" "$WAIT_FOR_INITIAL_POSE" \
   "$JT128_IMU_ACC_SCALE" "$JT128_IMU_GYR_SCALE" <<'PY'
 import sys
@@ -572,7 +583,7 @@ CONFIG_FILE="$EFFECTIVE_CONFIG_FILE"
 
 read_config_value() {
   local path_expr=$1
-  python3 - "$CONFIG_FILE" "$path_expr" <<'PY'
+  "$ROS_PYTHON_EXECUTABLE" - "$CONFIG_FILE" "$path_expr" <<'PY'
 import sys, yaml
 path, expr = sys.argv[1], sys.argv[2]
 with open(path, "r", encoding="utf-8") as f:
@@ -751,6 +762,17 @@ stop_group() {
   fi
 }
 
+wait_for_child_status() {
+  local pid=$1
+  local state
+  while kill -0 "$pid" 2>/dev/null; do
+    state=$(ps -o stat= -p "$pid" 2>/dev/null | awk '{print $1}')
+    [[ "$state" == Z* ]] && break
+    sleep 0.2
+  done
+  wait "$pid"
+}
+
 normalize_status() {
   local status=$1
   case "$status" in
@@ -832,7 +854,7 @@ launch_pid=$STARTED_PID
 sleep "$STARTUP_DELAY_SEC"
 
 if [[ $ENABLE_MONITOR -eq 1 ]]; then
-  setsid python3 "$ROOT_DIR/script/monitor_superodom_stats_live.py" \
+  setsid "$ROS_PYTHON_EXECUTABLE" "$ROOT_DIR/script/monitor_superodom_stats_live.py" \
     --topic /super_odometry_stats \
     --min-period "$MONITOR_PERIOD" \
     --log-file "$monitor_log" &
@@ -890,14 +912,17 @@ if [[ $MODE_REQUIRES_MAP -eq 1 && $WAIT_FOR_INITIAL_POSE -eq 1 ]]; then
   else
     echo "Use RViz '2D Pose Estimate' to publish /initialpose, then bag playback will start."
   fi
-  setsid python3 "$ROOT_DIR/script/wait_for_initial_pose.py" \
+  setsid "$ROS_PYTHON_EXECUTABLE" "$ROOT_DIR/script/wait_for_initial_pose.py" \
     --topic /initialpose \
     --timeout-sec "$INITIAL_POSE_TIMEOUT_SEC" >"$wait_pose_log" 2>&1 &
   wait_pose_pid=$!
-  wait "$wait_pose_pid"
+  wait_for_child_status "$wait_pose_pid"
   wait_pose_status=$?
   wait_pose_pid=""
   if [[ $wait_pose_status -ne 0 ]]; then
+    if [[ $wait_pose_status -eq 130 || $wait_pose_status -eq 143 ]]; then
+      exit "$wait_pose_status"
+    fi
     echo "Failed while waiting for /initialpose. See $wait_pose_log" >&2
     exit "$wait_pose_status"
   fi
@@ -917,13 +942,13 @@ fi
 if [[ $MODE_REQUIRES_BAG -eq 1 ]]; then
   start_group "$bag_log" "${bag_cmd[@]}"
   bag_pid=$STARTED_PID
-  wait "$bag_pid"
+  wait_for_child_status "$bag_pid"
   bag_status=$?
   bag_pid=""
 
   if [[ $KEEP_RVIZ_OPEN -eq 1 && -n "$rviz_pid" ]] && kill -0 "$rviz_pid" 2>/dev/null; then
     echo "Bag playback finished. Close RViz to end the session, or press Ctrl-C."
-    wait "$rviz_pid"
+    wait_for_child_status "$rviz_pid"
     rviz_status=$?
     rviz_pid=""
   else
@@ -932,16 +957,23 @@ if [[ $MODE_REQUIRES_BAG -eq 1 ]]; then
 else
   bag_status=0
   echo "Press Ctrl-C to stop."
+  wait_for_child_status "$launch_pid"
+  launch_status=$?
+  launch_pid=""
 fi
 
 cleanup
 
-wait "$launch_pid"
-launch_status=$?
-launch_pid=""
+if [[ -n "$launch_pid" ]]; then
+  wait_for_child_status "$launch_pid"
+  launch_status=$?
+  launch_pid=""
+else
+  launch_status=${launch_status:-0}
+fi
 
 if [[ -n "$monitor_pid" ]]; then
-  wait "$monitor_pid"
+  wait_for_child_status "$monitor_pid"
   monitor_status=$?
   monitor_pid=""
 else
@@ -949,7 +981,7 @@ else
 fi
 
 if [[ -n "$record_pid" ]]; then
-  wait "$record_pid"
+  wait_for_child_status "$record_pid"
   record_status=$?
   record_pid=""
 else

@@ -49,7 +49,7 @@ def generate_launch_description():
         description="Path to prior map PCD for localization mode")
     body_odom_input_topic_arg = DeclareLaunchArgument(
         "body_odom_input_topic",
-        default_value="/imu_odometry",
+        default_value="/laser_odometry",
         description="SuperOdom sensor-frame odometry topic to transform for the planner")
     body_odom_output_topic_arg = DeclareLaunchArgument(
         "body_odom_output_topic",

@@ -54,7 +54,7 @@ def generate_launch_description():
         description="Primary IMU topic used by SuperOdom")
     body_odom_input_topic_arg = DeclareLaunchArgument(
         "body_odom_input_topic",
-        default_value="/imu_odometry",
+        default_value="/laser_odometry",
         description="SuperOdom sensor-frame odometry topic to transform for the planner")
     body_odom_output_topic_arg = DeclareLaunchArgument(
         "body_odom_output_topic",

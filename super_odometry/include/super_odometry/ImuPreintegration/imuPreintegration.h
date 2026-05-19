@@ -29,7 +29,13 @@
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/PriorFactor.h>
 #include <gtsam/nonlinear/ISAM2.h>
+#if __has_include(<gtsam/nonlinear/IncrementalFixedLagSmoother.h>)
 #include <gtsam/nonlinear/IncrementalFixedLagSmoother.h>
+#elif __has_include(<gtsam_unstable/nonlinear/IncrementalFixedLagSmoother.h>)
+#include <gtsam_unstable/nonlinear/IncrementalFixedLagSmoother.h>
+#else
+#error "IncrementalFixedLagSmoother header not found in GTSAM install."
+#endif
 #include "super_odometry/utils/Twist.h"
 #include "super_odometry/container/MapRingBuffer.h"
 #include "super_odometry/config/parameter.h"

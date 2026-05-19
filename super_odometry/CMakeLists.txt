@@ -75,6 +75,13 @@ link_directories(
 )
 
 set(GTSAM_LIBRARIES gtsam)
+find_library(GTSAM_UNSTABLE_LIBRARY
+  NAMES gtsam_unstable
+  HINTS ${GTSAM_LIBRARY_DIRS} "${GTSAM_DIR}/../../../lib"
+)
+if(GTSAM_UNSTABLE_LIBRARY)
+  list(APPEND GTSAM_LIBRARIES ${GTSAM_UNSTABLE_LIBRARY})
+endif()
 
 
 # SuperOdom Library
@@ -116,15 +123,15 @@ ament_target_dependencies(SuperOdomLib
 target_link_libraries(SuperOdomLib
   ${PCL_LIBRARIES}
   ${OpenCV_LIBRARIES}
-  gtsam
- ${CERES_LIBRARIES}
+  ${GTSAM_LIBRARIES}
+  ${CERES_LIBRARIES}
 )
 
 # IMU PreIntegration node
 add_executable(imu_preintegration_node src/imuPreintegration_node.cpp)
 ament_target_dependencies(imu_preintegration_node rclcpp nav_msgs sensor_msgs tf2_ros)
 target_link_libraries(imu_preintegration_node
-    gtsam
+    ${GTSAM_LIBRARIES}
     SuperOdomLib
 )
 
