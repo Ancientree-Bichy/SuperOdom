@@ -95,7 +95,8 @@ This repository is a ROS 2 Humble workspace for `SuperOdom`.
   (X front, Y left, Z up), while keeping the Unitree structural translation.
 - JT128 localization should interpret RViz `/initialpose` as the robot
   `base_link` pose in `map`, then convert it to the internal
-  `front_hesai_jt128_gravity` pose with the same structural transform. Keep
+  `front_hesai_jt128_gravity` pose with the same yaw-only gravity-frame
+  transform and structural translation. Keep
   `laser_mapping_node.rviz_initial_pose_frame: "base_link"` and
   `rviz_initial_pose_lidar_to_body_xyzrpy` aligned with the final body-odom
   transform unless calibrated values replace the design extrinsic.

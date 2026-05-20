@@ -78,7 +78,7 @@ virtual frame appears as X/red left, Y/green back, Z/blue up. The planner-facing
 `base_link` odometry converts this virtual frame to ROS body axes:
 
 ```text
-front_lidar -> base_link:
+front_lidar_gravity -> base_link:
   t = [0.33767, 0.0, 0.08134]
   R_body_from_gravity = [0,-1,0; 1,0,0; 0,0,1]
   xyzrpy = [0.33767, 0.0, 0.08134, 0.0, 0.0, 1.57079632679]
